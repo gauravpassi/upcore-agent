@@ -1,0 +1,15 @@
+{
+  "name": "upcore-agent",
+  "version": "1.0.0",
+  "description": "UpcoreCodeTestDeploy Agent — monorepo root for Railway",
+  "scripts": {
+    "build": "npm ci --prefix server && npm ci --prefix frontend && npm run build --prefix frontend",
+    "start": "tsx server/src/index.ts"
+  },
+  "dependencies": {
+    "tsx": "^4.7.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

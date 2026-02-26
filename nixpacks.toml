@@ -1,0 +1,2 @@
+[start]
+cmd = "tsx server/src/index.ts"
