@@ -5,6 +5,10 @@ import { readFile } from './tools/readFile.js';
 import { searchCode } from './tools/searchCode.js';
 import { listFiles } from './tools/listFiles.js';
 import { getContext } from './tools/getContext.js';
+import { readRepoFile } from './tools/readRepoFile.js';
+import { writeFile } from './tools/writeFile.js';
+import { runCommand } from './tools/runCommand.js';
+import { gitPush } from './tools/gitPush.js';
 
 const CONTEXT_DIR = path.resolve(__dirname, '../../context');
 
@@ -41,13 +45,28 @@ ${turboIamContext}
 - Use the exact color tokens and component APIs from the design system
 
 ## Tool Usage Strategy
+
+### Read-Only (understanding codebase):
 1. Start with get_context('ROOT') for broad questions about patterns or architecture
 2. Use get_context('API_REFERENCE') to check existing endpoints before adding new ones
 3. Use get_context('DATA_MODEL') to understand Prisma models and relationships
 4. Use get_context('DESIGN_SYSTEM') for UI component props and color tokens
-5. Use search_code to find specific patterns, imports, or examples across files
-6. Use read_file only when you need full file contents not covered by the brain files
-7. Use list_files to discover what's available in the knowledge base
+5. Use search_code to find specific patterns, imports, or examples
+6. Use read_file for context/ brain files
+7. Use read_repo_file to read the ACTUAL source code files before modifying them
+
+### Write & Deploy (implementing changes):
+8. Use write_file to implement code changes — write complete files, no truncation
+9. Use run_command("npx tsc --noEmit", "turbo-backend") to verify TypeScript before pushing
+10. Use run_command("npx tsc --noEmit", "turbo-frontend") to verify frontend TypeScript
+11. Use git_push ONLY after TypeScript checks pass — this triggers Railway + Vercel auto-deploy
+
+### Workflow for any bug fix or feature:
+1. read_repo_file to understand existing code
+2. write_file with the fix/feature
+3. run_command to verify no TypeScript errors
+4. git_push with a clear conventional commit message
+5. Inform the user that Railway and Vercel are now deploying
 
 Generate complete, production-ready code. Do not add placeholders or TODOs unless absolutely necessary. Follow the patterns you observe in the codebase exactly.`;
 }
@@ -101,15 +120,98 @@ const TOOLS: Anthropic.Messages.Tool[] = [
       required: ['name'],
     },
   },
+  {
+    name: readRepoFile.name,
+    description: readRepoFile.description,
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        path: {
+          type: 'string',
+          description: 'File path relative to repo root (e.g. "turbo-backend/src/modules/auth/auth.service.ts")',
+        },
+      },
+      required: ['path'],
+    },
+  },
+  {
+    name: writeFile.name,
+    description: writeFile.description,
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        path: {
+          type: 'string',
+          description: 'File path relative to repo root (e.g. "turbo-backend/src/modules/foo/foo.service.ts")',
+        },
+        content: {
+          type: 'string',
+          description: 'Complete file content to write',
+        },
+      },
+      required: ['path', 'content'],
+    },
+  },
+  {
+    name: runCommand.name,
+    description: runCommand.description,
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        command: {
+          type: 'string',
+          description: 'Shell command to run (e.g. "npx tsc --noEmit", "npm run build", "git status")',
+        },
+        cwd: {
+          type: 'string',
+          description: 'Subdirectory relative to repo root (e.g. "turbo-backend", "turbo-frontend")',
+        },
+      },
+      required: ['command'],
+    },
+  },
+  {
+    name: gitPush.name,
+    description: gitPush.description,
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        message: {
+          type: 'string',
+          description: 'Conventional commit message (e.g. "fix: resolve user list pagination bug")',
+        },
+        files: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Specific files to stage. If omitted, stages all changed files.',
+        },
+      },
+      required: ['message'],
+    },
+  },
 ];
 
-type ToolName = 'read_file' | 'search_code' | 'list_files' | 'get_context';
+type ToolName =
+  | 'read_file'
+  | 'search_code'
+  | 'list_files'
+  | 'get_context'
+  | 'read_repo_file'
+  | 'write_file'
+  | 'run_command'
+  | 'git_push';
 
-const TOOL_HANDLERS: Record<ToolName, (args: Record<string, unknown>) => Promise<{ content: { type: 'text'; text: string }[] }>> = {
-  read_file: readFile.handler as (args: Record<string, unknown>) => Promise<{ content: { type: 'text'; text: string }[] }>,
-  search_code: searchCode.handler as (args: Record<string, unknown>) => Promise<{ content: { type: 'text'; text: string }[] }>,
-  list_files: listFiles.handler as (args: Record<string, unknown>) => Promise<{ content: { type: 'text'; text: string }[] }>,
-  get_context: getContext.handler as (args: Record<string, unknown>) => Promise<{ content: { type: 'text'; text: string }[] }>,
+type ToolHandler = (args: Record<string, unknown>) => Promise<{ content: { type: 'text'; text: string }[] }>;
+
+const TOOL_HANDLERS: Record<ToolName, ToolHandler> = {
+  read_file: readFile.handler as ToolHandler,
+  search_code: searchCode.handler as ToolHandler,
+  list_files: listFiles.handler as ToolHandler,
+  get_context: getContext.handler as ToolHandler,
+  read_repo_file: readRepoFile.handler as ToolHandler,
+  write_file: writeFile.handler as ToolHandler,
+  run_command: runCommand.handler as ToolHandler,
+  git_push: gitPush.handler as ToolHandler,
 };
 
 export async function runAgent(

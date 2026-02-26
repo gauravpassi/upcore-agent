@@ -3,7 +3,8 @@
 > Auto-loaded by Claude. Read this INSTEAD of exploring files from scratch.
 
 ## What This Is
-A hosted Claude Agent SDK app that lets developers chat with an AI that knows the full TurboIAM codebase. Developer opens a URL, types a task, gets production-ready code following TurboIAM patterns.
+A hosted Claude Agent SDK app that lets developers chat with an AI that knows the full TurboIAM codebase.
+Developer types a task → agent reads existing code → writes the fix/feature → verifies TypeScript → pushes to GitHub → Railway + Vercel auto-deploy.
 
 ## Stack
 - **Agent**: `@anthropic-ai/sdk` (raw streaming API), model `claude-sonnet-4-5`, manual agentic loop
@@ -13,65 +14,79 @@ A hosted Claude Agent SDK app that lets developers chat with an AI that knows th
 - **Deploy split**: Frontend → Vercel (CDN, free), Backend → Railway (~$5/mo, persistent WebSocket)
 
 ## Repo
-Same GitHub repo as TurboIAM: `github.com/gauravpassi/turbo-claude`
-This lives at `turbo-claude/upcore-agent/` — committed and pushed alongside the main app.
+`github.com/gauravpassi/upcore-agent` — standalone repo, separate from TurboIAM.
 
 ## Directory Structure
 ```
-turbo-claude/
-├── turbo-backend/           TurboIAM NestJS API
-├── turbo-frontend/          TurboIAM React app
-└── upcore-agent/            ← This project
-    ├── server/                  Express + Agent SDK backend (→ Railway)
-    ├── frontend/                React chat UI (→ Vercel)
-    ├── context/                 TurboIAM brain files (read-only copy)
-    └── CLAUDE.md                ← This file
-├── server/                  Express + Agent SDK backend
+upcore-agent/
+├── server/                  Express + Agent SDK backend (→ Railway)
 │   ├── src/
-│   │   ├── index.ts         Entry: Express + WebSocket server setup
+│   │   ├── index.ts         Entry: Express + WebSocket server + repo clone on startup
 │   │   ├── agent.ts         Claude Agent SDK, tools, system prompt
 │   │   └── tools/
-│   │       ├── readFile.ts  Read file from context/ folder
-│   │       ├── searchCode.ts Grep search across context files
-│   │       ├── listFiles.ts  List available context files
-│   │       └── getContext.ts Return named brain file instantly
+│   │       ├── readFile.ts      Read file from context/ folder
+│   │       ├── searchCode.ts    Grep search across context files
+│   │       ├── listFiles.ts     List available context files
+│   │       ├── getContext.ts    Return named brain file instantly
+│   │       ├── readRepoFile.ts  Read any file from live turbo-claude repo ← NEW
+│   │       ├── writeFile.ts     Write/create files in turbo-claude repo  ← NEW
+│   │       ├── runCommand.ts    Run safe shell commands in repo dir       ← NEW
+│   │       └── gitPush.ts       git add + commit + push → auto-deploy    ← NEW
 │   ├── package.json
 │   └── CLAUDE.md            Server-specific brain →
-├── frontend/                React chat UI
+├── frontend/                React chat UI (→ Vercel)
 │   ├── src/
-│   │   ├── main.tsx         App entry
-│   │   ├── App.tsx          Chat layout (sidebar + main)
+│   │   ├── main.tsx
+│   │   ├── App.tsx
 │   │   ├── components/
-│   │   │   ├── ChatWindow.tsx  Message history + streaming
-│   │   │   ├── InputBar.tsx    Text input + send button
-│   │   │   ├── Message.tsx     User / agent message bubble
-│   │   │   └── ToolBadge.tsx   Inline tool call indicator
+│   │   │   ├── ChatWindow.tsx
+│   │   │   ├── InputBar.tsx
+│   │   │   ├── Message.tsx
+│   │   │   └── ToolBadge.tsx
 │   │   └── hooks/
-│   │       └── useAgent.ts  WebSocket connection + streaming state
+│   │       └── useAgent.ts
 │   ├── package.json
-│   └── CLAUDE.md            Frontend-specific brain →
-├── context/                 TurboIAM brain files (read-only, agent's knowledge base)
+│   └── CLAUDE.md
+├── context/                 TurboIAM brain files (auto-synced from live repo on startup + after push)
 │   ├── CLAUDE.md            Root TurboIAM context
+│   ├── BACKEND_CLAUDE.md    Backend-specific context
+│   ├── FRONTEND_CLAUDE.md   Frontend-specific context
 │   ├── API_REFERENCE.md     All TurboIAM endpoints
 │   ├── DATA_MODEL.md        All Prisma models
 │   └── DESIGN_SYSTEM.md     Colors, components, props
 ├── railway.json             Deploy config
-├── .env.example
+├── nixpacks.toml
 └── CLAUDE.md                ← This file
 ```
 
 ## Key Architecture Decisions
 - **WebSocket for streaming**: Server streams agent text chunks + tool events to frontend in real-time
-- **JWT auth (login → token → persist)**:
-  - User enters password on login page → `POST /api/auth/login` → server returns signed JWT (24h expiry)
-  - JWT stored in `localStorage` key `upcore_token`
-  - WS connects with `?token=<jwt>` — server verifies JWT on upgrade, no raw password ever sent over WS
-  - On page refresh → token re-read from localStorage → skip login if valid
-  - On 401 (expired/invalid) → clear token → redirect to login page
-- **Context is static**: TurboIAM brain files copied into `context/` folder at build time — agent reads from there, NOT live repo
-- **No file write access**: Agent is read-only (no write_file tool) — generates code in chat only
-- **Rate limiting**: `POST /api/auth/login` → 5 attempts/15min per IP; WS → 10 messages/min per connection
-- **System prompt**: Full `context/CLAUDE.md` content embedded at agent init, not re-read per message
+- **JWT auth**: Password → JWT (24h) → WS connects with `?token=<jwt>`
+- **Live repo access**: On startup, server clones `turbo-claude` repo to `TURBO_REPO_DIR` (default `/tmp/turbo-claude`)
+- **Context auto-sync**: Brain files in `context/` are synced from live repo on startup AND after every `git_push`
+- **Full code/push loop**: Agent reads live code → writes changes → verifies TS → pushes → Railway+Vercel auto-deploy
+- **Rate limiting**: Login → 5 attempts/15min; WS → 10 messages/min
+
+## Agent Tools (8 total)
+
+| Tool | Purpose |
+|---|---|
+| `get_context` | Fast access to brain files (ROOT, API_REFERENCE, DATA_MODEL, DESIGN_SYSTEM) |
+| `list_files` | List all files in context/ folder |
+| `read_file` | Read a specific file from context/ folder |
+| `search_code` | Grep search across context files |
+| `read_repo_file` | Read any file from the live turbo-claude repo |
+| `write_file` | Write/overwrite a file in the turbo-claude repo |
+| `run_command` | Run safe commands (tsc, npm build, git status) in repo |
+| `git_push` | Commit + push → triggers Railway + Vercel auto-deploy |
+
+## Agent Workflow (Code + Deploy)
+1. `get_context` / `read_repo_file` — understand existing code
+2. `write_file` — implement the fix or feature
+3. `run_command("npx tsc --noEmit", "turbo-backend")` — verify no TS errors
+4. `run_command("npx tsc --noEmit", "turbo-frontend")` — verify frontend TS
+5. `git_push` — commit + push → Railway and Vercel auto-deploy
+6. Context files auto-synced after push
 
 ## WebSocket Message Protocol
 ```typescript
@@ -80,75 +95,70 @@ turbo-claude/
 { type: 'cancel' }
 
 // Server → Client (streamed)
-{ type: 'text_chunk', content: string }        // partial text token
-{ type: 'tool_start', tool: string }           // e.g., "read_file"
+{ type: 'text_chunk', content: string }
+{ type: 'tool_start', tool: string }
 { type: 'tool_done', tool: string, result: string }
 { type: 'complete', usage: { input: number, output: number } }
 { type: 'error', message: string }
 ```
 
-## Adding a New Tool
-1. Create `server/src/tools/<toolName>.ts` — export `{ name, description, schema, handler }`
-2. Import and add to `tools[]` array in `server/src/agent.ts`
-3. Add to `allowedTools` array in agent options
-4. Update `server/CLAUDE.md` tools table
-5. Update this file if the tool changes overall architecture
-
-## Run Commands
-```bash
-# Server (Railway)
-cd server && npm install && npm run dev     # dev with tsx, port 3000
-
-# Frontend (Vercel)
-cd frontend && npm install && npm run dev   # Vite dev server, port 5174
-
-# Deploy Backend → Railway
-# Connect repo in Railway dashboard → set env vars → auto-deploys on push to main
-# Railway build: npm run build, start: npm start
-
-# Deploy Frontend → Vercel
-cd frontend && vercel --prod                # set VITE_WS_URL + VITE_API_URL in Vercel dashboard
-```
-
 ## Environment Variables
 
-### Server (set in Railway dashboard)
+### Server (Railway dashboard)
 ```
 ANTHROPIC_API_KEY=sk-ant-...               # Claude API key (required)
-AGENT_PASSWORD=<strong-password>           # Login password shown to developers (required)
-AGENT_JWT_SECRET=<random-32-char-string>   # Signs/verifies JWTs — generate: openssl rand -hex 32
-PORT=3000                                  # Railway sets this automatically
+AGENT_PASSWORD=<strong-password>           # Login password (required)
+AGENT_JWT_SECRET=<random-32-char-string>   # openssl rand -hex 32 (required)
+GITHUB_TOKEN=<github-pat>                  # Push to turbo-claude repo (required for write)
+TURBO_REPO_URL=https://github.com/gauravpassi/turbo-claude  # Repo to clone (required for write)
+TURBO_REPO_DIR=/tmp/turbo-claude           # Where to clone locally (optional, default /tmp/turbo-claude)
 NODE_ENV=production
+PORT=                                      # Set by Railway automatically
 ```
 
-### Frontend (set in Vercel dashboard)
+### Frontend (Vercel dashboard)
 ```
-VITE_WS_URL=wss://your-app.railway.app/ws  # Railway backend WebSocket URL (required)
+VITE_API_URL=https://<railway-url>/api
+VITE_WS_URL=wss://<railway-url>/ws
 ```
 
 ## Deploy Architecture
 ```
-User Browser
+Developer Browser
     ↓  HTTPS
-Vercel CDN  (frontend static files — React app)
-    ↓  WSS (WebSocket Secure)
-Railway Server  (Express + Agent SDK — persistent, stateful)
+Vercel CDN  (React chat UI)
+    ↓  WSS
+Railway Server  (Express + Agent SDK)
+    ↓  reads/writes
+/tmp/turbo-claude  (cloned turbo-claude repo)
+    ↓  git push
+GitHub → Railway auto-deploy (backend) + Vercel auto-deploy (frontend)
     ↓  HTTPS
-Anthropic API  (Claude claude-sonnet-4-5)
+Anthropic API  (claude-sonnet-4-5)
 ```
-**Why split?** Vercel can't run persistent WebSocket servers (serverless). Railway keeps the WS connection alive for streaming agent responses.
+
+## Run Commands
+```bash
+# Server
+cd server && npm install && npm run dev     # dev, port 3000
+
+# Frontend
+cd frontend && npm install && npm run dev   # Vite dev, port 5174
+```
 
 ## Sprint Status
-- Sprint 1: ⏳ Agent core + tools + WebSocket server
-- Sprint 2: ⏳ Chat UI (streaming, tool badges, code blocks)
-- Sprint 3: ⏳ Railway deploy + auth
-- Sprint 4: ⏳ Polish (conversation history, copy code, context selector)
+- Sprint 1: ✅ Agent core + tools + WebSocket server
+- Sprint 2: ✅ Chat UI (streaming, tool badges, code blocks)
+- Sprint 3: ✅ Railway deploy + auth
+- Sprint 4: ✅ Write/push tools (read_repo_file, write_file, run_command, git_push)
+- Sprint 5: ⏳ Polish (conversation history, copy code, context selector)
 
 ## Brain File Maintenance
-After any session where you modify this project, check:
-- Added/changed tool → update `server/CLAUDE.md` (tools table)
-- Added WS message type → update this file (protocol section)
-- Added frontend component → update `frontend/CLAUDE.md` (components table)
-- Changed deploy config → update this file (run commands / env vars)
+After any session where you modify this project:
+- Added/changed tool → update tools table above + `server/CLAUDE.md`
+- Added WS message type → update protocol section
+- Added frontend component → update `frontend/CLAUDE.md`
+- Changed env vars → update Environment Variables section
+- Changed deploy config → update Deploy Architecture section
 
 Do this BEFORE ending the session, even if the user didn't ask.

@@ -3,6 +3,7 @@ import express from 'express';
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
+import { execSync } from 'child_process';
 import { WebSocketServer, WebSocket } from 'ws';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -26,9 +27,90 @@ function validateEnv(): void {
   if (process.env.TELEGRAM_BOT_TOKEN && !process.env.TELEGRAM_ALLOWED_CHAT_IDS) {
     throw new Error('TELEGRAM_ALLOWED_CHAT_IDS is required when TELEGRAM_BOT_TOKEN is set.');
   }
+  // Warn (not fail) if git tools env vars are missing — agent still works read-only
+  if (!process.env.GITHUB_TOKEN || !process.env.TURBO_REPO_URL) {
+    console.warn('[UpcoreAgent] ⚠️  GITHUB_TOKEN or TURBO_REPO_URL not set — write/push tools disabled');
+  }
 }
 
 validateEnv();
+
+// ─── TurboIAM Repo Clone / Pull ─────────────────────────────────────────────
+/**
+ * At startup, clone the turbo-claude repo (or pull if already cloned).
+ * The repo is used by read_repo_file, write_file, run_command, and git_push tools.
+ */
+async function initTurboRepo(): Promise<void> {
+  const token = process.env.GITHUB_TOKEN;
+  const repoUrl = process.env.TURBO_REPO_URL;
+  const repoDir = process.env.TURBO_REPO_DIR ?? '/tmp/turbo-claude';
+
+  if (!token || !repoUrl) {
+    console.log('[UpcoreAgent] Skipping repo clone — GITHUB_TOKEN or TURBO_REPO_URL not set');
+    return;
+  }
+
+  const authUrl = repoUrl.replace('https://', `https://${token}@`);
+  const execOpts = {
+    encoding: 'utf-8' as const,
+    stdio: 'pipe' as const,
+    timeout: 120_000,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+  };
+
+  try {
+    if (fs.existsSync(path.join(repoDir, '.git'))) {
+      // Repo already cloned — pull latest
+      console.log(`[UpcoreAgent] Pulling latest turbo-claude repo at ${repoDir}...`);
+      execSync('git pull origin main --rebase', { ...execOpts, cwd: repoDir });
+      console.log('[UpcoreAgent] ✅ Repo pulled successfully');
+    } else {
+      // Fresh clone
+      console.log(`[UpcoreAgent] Cloning turbo-claude repo to ${repoDir}...`);
+      fs.mkdirSync(repoDir, { recursive: true });
+      execSync(`git clone "${authUrl}" "${repoDir}"`, execOpts);
+      console.log('[UpcoreAgent] ✅ Repo cloned successfully');
+    }
+
+    // Sync context (brain) files from the cloned repo
+    syncContextFromRepo(repoDir);
+  } catch (err) {
+    console.error('[UpcoreAgent] ❌ Failed to clone/pull repo:', (err as Error).message);
+    // Non-fatal — server still starts, write tools will return errors
+  }
+}
+
+/**
+ * Copy brain (CLAUDE.md / docs) files from the turbo-claude repo into
+ * the agent's context/ folder so the agent always has the latest docs.
+ */
+function syncContextFromRepo(repoDir: string): void {
+  const contextDir = path.resolve(__dirname, '../../context');
+  const filesToSync = [
+    { src: 'CLAUDE.md', dest: 'CLAUDE.md' },
+    { src: 'turbo-backend/CLAUDE.md', dest: 'BACKEND_CLAUDE.md' },
+    { src: 'turbo-frontend/CLAUDE.md', dest: 'FRONTEND_CLAUDE.md' },
+    { src: 'turbo-backend/docs/API_REFERENCE.md', dest: 'API_REFERENCE.md' },
+    { src: 'turbo-backend/docs/DATA_MODEL.md', dest: 'DATA_MODEL.md' },
+    { src: 'turbo-frontend/docs/DESIGN_SYSTEM.md', dest: 'DESIGN_SYSTEM.md' },
+  ];
+
+  let synced = 0;
+  for (const { src, dest } of filesToSync) {
+    const srcPath = path.join(repoDir, src);
+    const destPath = path.join(contextDir, dest);
+    if (fs.existsSync(srcPath)) {
+      try {
+        fs.mkdirSync(contextDir, { recursive: true });
+        fs.copyFileSync(srcPath, destPath);
+        synced++;
+      } catch {
+        // Non-fatal
+      }
+    }
+  }
+  console.log(`[UpcoreAgent] Synced ${synced}/${filesToSync.length} context files from repo`);
+}
 
 const PORT = parseInt(process.env.PORT ?? '3000', 10);
 
@@ -191,20 +273,23 @@ server.on('upgrade', (req, socket, head) => {
 });
 
 // ─── Start ───────────────────────────────────────────────────────────────────
-server.listen(PORT, () => {
-  console.log(`[UpcoreAgent] Server running on port ${PORT}`);
-  console.log(`[UpcoreAgent] Environment: ${process.env.NODE_ENV ?? 'development'}`);
+// Clone/pull turbo-claude repo first, then start the server
+initTurboRepo().finally(() => {
+  server.listen(PORT, () => {
+    console.log(`[UpcoreAgent] Server running on port ${PORT}`);
+    console.log(`[UpcoreAgent] Environment: ${process.env.NODE_ENV ?? 'development'}`);
 
-  // Telegram bot is optional — only starts if TELEGRAM_BOT_TOKEN is set
-  if (process.env.TELEGRAM_BOT_TOKEN) {
-    // Lazy import to avoid loading the module when Telegram is disabled
-    import('./telegram.js').then(({ initTelegramBot }) => {
-      initTelegramBot();
-      console.log('[Telegram] Bot initialized and polling');
-    }).catch((err: Error) => {
-      console.error('[Telegram] Failed to initialize bot:', err.message);
-    });
-  }
+    // Telegram bot is optional — only starts if TELEGRAM_BOT_TOKEN is set
+    if (process.env.TELEGRAM_BOT_TOKEN) {
+      // Lazy import to avoid loading the module when Telegram is disabled
+      import('./telegram.js').then(({ initTelegramBot }) => {
+        initTelegramBot();
+        console.log('[Telegram] Bot initialized and polling');
+      }).catch((err: Error) => {
+        console.error('[Telegram] Failed to initialize bot:', err.message);
+      });
+    }
+  });
 });
 
 export { app, server };
