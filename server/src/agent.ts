@@ -262,7 +262,7 @@ export async function runAgent(
     // Stream the response
     const stream = await client.messages.stream({
       model: 'claude-sonnet-4-5',
-      max_tokens: 8192,
+      max_tokens: 16000,
       system: loadSystemPrompt(),
       tools: TOOLS,
       messages,

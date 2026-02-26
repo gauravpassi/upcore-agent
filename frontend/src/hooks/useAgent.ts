@@ -18,6 +18,9 @@ interface WsMessage {
   usage?: { input: number; output: number };
 }
 
+// If streaming but no event received for this long, auto-reset (prevents stuck UI)
+const STREAM_INACTIVITY_TIMEOUT_MS = 120_000; // 2 minutes
+
 export function useAgent(token: string | null, onAuthError: () => void) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -27,6 +30,37 @@ export function useAgent(token: string | null, onAuthError: () => void) {
   const retriesRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const shouldReconnectRef = useRef(true);
+  const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── Inactivity timer — resets streaming state if server goes silent ───────
+  const clearInactivityTimer = useCallback(() => {
+    if (inactivityTimerRef.current) {
+      clearTimeout(inactivityTimerRef.current);
+      inactivityTimerRef.current = null;
+    }
+  }, []);
+
+  const resetInactivityTimer = useCallback(() => {
+    clearInactivityTimer();
+    inactivityTimerRef.current = setTimeout(() => {
+      // No streaming event for 2 minutes — connection likely dead
+      setIsStreaming(false);
+      setMessages((prev) => {
+        const msgs = [...prev];
+        const last = msgs[msgs.length - 1];
+        if (last?.role === 'agent' && last.isStreaming) {
+          msgs[msgs.length - 1] = { ...last, isStreaming: false };
+        }
+        msgs.push({
+          id: generateId(),
+          role: 'agent',
+          content: '⚠️ **Connection timed out** — the agent stopped responding. Please start a new message or refresh if the issue persists.',
+          timestamp: new Date(),
+        });
+        return msgs;
+      });
+    }, STREAM_INACTIVITY_TIMEOUT_MS);
+  }, [clearInactivityTimer]);
 
   // ── Connect ──────────────────────────────────────────────────────────────
   const connect = useCallback(() => {
@@ -45,6 +79,7 @@ export function useAgent(token: string | null, onAuthError: () => void) {
     ws.onclose = (event) => {
       setIsConnected(false);
       setIsStreaming(false);
+      clearInactivityTimer();
       wsRef.current = null;
 
       // 4001 = JWT auth failed
@@ -72,6 +107,9 @@ export function useAgent(token: string | null, onAuthError: () => void) {
       } catch {
         return;
       }
+
+      // Any event from server resets the inactivity timer
+      resetInactivityTimer();
 
       switch (data.type) {
         case 'text_chunk': {
@@ -153,6 +191,7 @@ export function useAgent(token: string | null, onAuthError: () => void) {
         }
 
         case 'complete': {
+          clearInactivityTimer();
           setIsStreaming(false);
           setMessages((prev) => {
             const msgs = [...prev];
@@ -166,6 +205,7 @@ export function useAgent(token: string | null, onAuthError: () => void) {
         }
 
         case 'error': {
+          clearInactivityTimer();
           setIsStreaming(false);
           setMessages((prev) => {
             const msgs = [...prev];
@@ -197,6 +237,7 @@ export function useAgent(token: string | null, onAuthError: () => void) {
     return () => {
       shouldReconnectRef.current = false;
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      clearInactivityTimer();
       wsRef.current?.close();
     };
   }, [token, connect]);
@@ -219,6 +260,7 @@ export function useAgent(token: string | null, onAuthError: () => void) {
       ]);
 
       setIsStreaming(true);
+      resetInactivityTimer();
 
       // Send images as lightweight objects (strip previewUrl — not needed server-side)
       const payload = {
@@ -237,6 +279,7 @@ export function useAgent(token: string | null, onAuthError: () => void) {
   const cancel = useCallback(() => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
     wsRef.current.send(JSON.stringify({ type: 'cancel' }));
+    clearInactivityTimer();
     setIsStreaming(false);
     setMessages((prev) => {
       const msgs = [...prev];
