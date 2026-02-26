@@ -214,20 +214,45 @@ const TOOL_HANDLERS: Record<ToolName, ToolHandler> = {
   git_push: gitPush.handler as ToolHandler,
 };
 
+interface IncomingImage {
+  data: string;
+  mediaType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+  name: string;
+}
+
 export async function runAgent(
   userMessage: string,
+  images: IncomingImage[] | undefined,
   conversationHistory: Anthropic.Messages.MessageParam[],
   onEvent: (event: AgentEvent) => void,
   abortSignal: AbortSignal,
 ): Promise<Anthropic.Messages.MessageParam[]> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
+  // Build user message content — images first, then text (Claude vision format)
+  let userContent: Anthropic.Messages.MessageParam['content'];
+
+  if (images && images.length > 0) {
+    const parts: Anthropic.Messages.ContentBlockParam[] = [
+      ...images.map((img): Anthropic.Messages.ImageBlockParam => ({
+        type: 'image',
+        source: { type: 'base64', media_type: img.mediaType, data: img.data },
+      })),
+    ];
+    if (userMessage.trim()) {
+      parts.push({ type: 'text', text: userMessage });
+    }
+    userContent = parts;
+  } else {
+    userContent = userMessage;
+  }
+
   const messages: Anthropic.Messages.MessageParam[] = [
     ...conversationHistory,
-    { role: 'user', content: userMessage },
+    { role: 'user', content: userContent },
   ];
 
-  const MAX_TURNS = 15;
+  const MAX_TURNS = 30;
   let turns = 0;
 
   while (turns < MAX_TURNS) {

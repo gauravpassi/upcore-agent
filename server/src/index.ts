@@ -202,7 +202,13 @@ wss.on('connection', (ws: WebSocket) => {
       return;
     }
 
-    let parsed: { type: string; content?: string };
+    interface WsIncomingImage {
+      data: string;
+      mediaType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+      name: string;
+    }
+
+    let parsed: { type: string; content?: string; images?: WsIncomingImage[] };
     try {
       parsed = JSON.parse(raw.toString());
     } catch {
@@ -217,8 +223,11 @@ wss.on('connection', (ws: WebSocket) => {
     }
 
     if (parsed.type === 'message') {
-      if (!parsed.content?.trim()) {
-        ws.send(JSON.stringify({ type: 'error', message: 'Message content cannot be empty' }));
+      const hasText = parsed.content?.trim();
+      const hasImages = parsed.images && parsed.images.length > 0;
+
+      if (!hasText && !hasImages) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Message must have text or at least one image' }));
         return;
       }
 
@@ -228,7 +237,8 @@ wss.on('connection', (ws: WebSocket) => {
 
       try {
         state.conversationHistory = await runAgent(
-          parsed.content,
+          parsed.content ?? '',
+          parsed.images,
           state.conversationHistory,
           (event: AgentEvent) => {
             if (ws.readyState === WebSocket.OPEN) {

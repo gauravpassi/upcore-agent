@@ -117,6 +117,20 @@ export function Message({ message }: MessageProps) {
           </div>
         )}
 
+        {/* Image attachments (user messages) */}
+        {isUser && message.images && message.images.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-2 justify-end">
+            {message.images.map((img, idx) => (
+              <img
+                key={idx}
+                src={img.previewUrl ?? `data:${img.mediaType};base64,${img.data}`}
+                alt={img.name}
+                className="max-w-[200px] max-h-[160px] object-cover rounded-xl border border-white/20 shadow-sm"
+              />
+            ))}
+          </div>
+        )}
+
         {/* Message bubble */}
         {(message.content || isUser) && (
           <div
@@ -127,7 +141,7 @@ export function Message({ message }: MessageProps) {
             }
           >
             {isUser ? (
-              <p className="whitespace-pre-wrap m-0">{message.content}</p>
+              <p className="whitespace-pre-wrap m-0">{message.content || <span className="opacity-60 italic">image attached</span>}</p>
             ) : (
               <div className="prose-sm">
                 <ReactMarkdown components={markdownComponents}>{message.content}</ReactMarkdown>

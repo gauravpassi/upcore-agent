@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import type { Message, ToolEvent } from '../types';
+import type { Message, ToolEvent, AttachedImage } from '../types';
 
 const WS_URL = import.meta.env.VITE_WS_URL ?? 'ws://localhost:3000/ws';
 const MAX_RETRIES = 3;
@@ -203,7 +203,7 @@ export function useAgent(token: string | null, onAuthError: () => void) {
 
   // ── Send ──────────────────────────────────────────────────────────────────
   const send = useCallback(
-    (content: string) => {
+    (content: string, images: AttachedImage[] = []) => {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
       if (isStreaming) return;
 
@@ -213,12 +213,22 @@ export function useAgent(token: string | null, onAuthError: () => void) {
           id: generateId(),
           role: 'user',
           content,
+          images: images.length > 0 ? images : undefined,
           timestamp: new Date(),
         },
       ]);
 
       setIsStreaming(true);
-      wsRef.current.send(JSON.stringify({ type: 'message', content }));
+
+      // Send images as lightweight objects (strip previewUrl — not needed server-side)
+      const payload = {
+        type: 'message',
+        content,
+        images: images.length > 0
+          ? images.map(({ data, mediaType, name }) => ({ data, mediaType, name }))
+          : undefined,
+      };
+      wsRef.current.send(JSON.stringify(payload));
     },
     [isStreaming],
   );
