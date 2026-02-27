@@ -41,6 +41,14 @@ validateEnv();
  * The repo is used by read_repo_file, write_file, run_command, and git_push tools.
  */
 async function initTurboRepo(): Promise<void> {
+  // In Electron mode, the user's local project dir is used directly — no clone needed
+  if (process.env.ELECTRON === 'true') {
+    const projectDir = process.env.TURBO_PROJECT_DIR;
+    console.log(`[UpcoreAgent] Electron mode — using local project dir: ${projectDir || '(not set yet)'}`);
+    if (projectDir) syncContextFromRepo(projectDir);
+    return;
+  }
+
   const token = process.env.GITHUB_TOKEN;
   const repoUrl = process.env.TURBO_REPO_URL;
   const repoDir = process.env.TURBO_REPO_DIR ?? '/tmp/turbo-claude';

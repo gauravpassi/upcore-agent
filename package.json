@@ -1,12 +1,32 @@
 {
-  "name": "upcore-agent",
+  "name": "@turboiam/agent-desktop",
   "version": "1.0.0",
-  "description": "UpcoreCodeTestDeploy Agent — monorepo root for Railway",
+  "description": "TurboIAM Agent — AI coding assistant desktop app for TurboIAM enterprise clients",
+  "main": "electron/dist/main.js",
   "scripts": {
-    "build": "npm ci --prefix server && npm ci --prefix frontend && npm run build --prefix frontend",
+    "dev": "concurrently --names \"SERVER,FRONTEND,ELECTRON\" --prefix-colors \"cyan,magenta,yellow\" \"npm run dev:server\" \"npm run dev:frontend\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .\"",
+    "dev:server": "cd server && npx tsx src/index.ts",
+    "dev:frontend": "cd frontend && npx vite",
+    "build:frontend": "cd frontend && npm install && npm run build",
+    "build:server": "cd server && npm install && npx tsc",
+    "build:electron": "npx tsc -p electron/tsconfig.json",
+    "build": "npm run build:frontend && npm run build:server && npm run build:electron",
+    "dist:mac": "npm run build && npx electron-builder --mac",
+    "dist:win": "npm run build && npx electron-builder --win",
+    "dist:linux": "npm run build && npx electron-builder --linux",
     "start": "tsx server/src/index.ts"
   },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "concurrently": "^9.0.0",
+    "cross-env": "^7.0.3",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0",
+    "typescript": "^5.4.2",
+    "wait-on": "^8.0.0"
+  },
   "dependencies": {
+    "electron-store": "^8.2.0",
     "tsx": "^4.7.1"
   },
   "engines": {

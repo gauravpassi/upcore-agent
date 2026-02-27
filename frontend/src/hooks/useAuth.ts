@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 
 const TOKEN_KEY = 'upcore_token';
 const API_URL = import.meta.env.VITE_API_URL ?? '/api';
@@ -46,6 +46,19 @@ export function useAuth() {
   const [token, setToken] = useState<string | null>(() => readStoredToken());
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Electron auto-login: main process passes JWT as ?autoToken= URL param
+  // after doing the login POST itself (user never sees the login screen in Electron)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const autoToken = params.get('autoToken');
+    if (autoToken && isTokenValid(autoToken)) {
+      localStorage.setItem(TOKEN_KEY, autoToken);
+      setToken(autoToken);
+      // Clean the token from the URL so it's not visible / shareable
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
 
   const login = useCallback(async (password: string): Promise<boolean> => {
     setIsLoading(true);

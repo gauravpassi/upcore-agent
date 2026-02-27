@@ -3,7 +3,8 @@ import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 
-const REPO_DIR = process.env.TURBO_REPO_DIR ?? '/tmp/turbo-claude';
+// Electron: TURBO_PROJECT_DIR = client's local dir; Railway: TURBO_REPO_DIR = cloned repo
+const REPO_DIR = process.env.TURBO_PROJECT_DIR ?? process.env.TURBO_REPO_DIR ?? '/tmp/turbo-claude';
 const CONTEXT_DIR = path.resolve(__dirname, '../../../context');
 
 function exec(cmd: string, cwd: string = REPO_DIR): string {
@@ -75,8 +76,11 @@ export const gitPush = {
   handler: async (args: { message: string; files?: string[] }) => {
     const token = process.env.GITHUB_TOKEN;
     const repoUrl = process.env.TURBO_REPO_URL;
+    const isElectron = process.env.ELECTRON === 'true';
 
-    if (!token || !repoUrl) {
+    // In Railway mode, token + repoUrl are required
+    // In Electron mode, we rely on the user's local git credentials (SSH key, macOS Keychain, etc.)
+    if (!isElectron && (!token || !repoUrl)) {
       return {
         content: [
           {
@@ -92,9 +96,12 @@ export const gitPush = {
       exec('git config user.email "upcore-agent@turboiam.dev"');
       exec('git config user.name "UpcoreAgent"');
 
-      // Set authenticated remote URL
-      const authUrl = repoUrl.replace('https://', `https://${token}@`);
-      exec(`git remote set-url origin "${authUrl}"`);
+      // In Railway mode: inject token into remote URL
+      // In Electron mode: use local git credentials (SSH key or macOS Keychain)
+      if (token && repoUrl) {
+        const authUrl = repoUrl.replace('https://', `https://${token}@`);
+        exec(`git remote set-url origin "${authUrl}"`);
+      }
 
       // Pull latest to avoid conflicts
       try {
@@ -151,7 +158,9 @@ export const gitPush = {
               `✅ Successfully pushed to GitHub!\n\n` +
               `Commit: "${args.message}"\n\n` +
               `Files committed:\n${stagedFiles}\n\n` +
-              `🚀 Railway (backend) and Vercel (frontend) are now auto-deploying.\n` +
+              (isElectron
+                ? `🚀 Changes pushed. Your deployment pipeline will pick up the changes.\n`
+                : `🚀 Railway (backend) and Vercel (frontend) are now auto-deploying.\n`) +
               `📚 Agent context (brain files) have been synced.`,
           },
         ],

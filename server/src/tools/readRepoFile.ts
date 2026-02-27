@@ -2,7 +2,8 @@ import { z } from 'zod';
 import * as fs from 'fs';
 import * as path from 'path';
 
-const REPO_DIR = process.env.TURBO_REPO_DIR ?? '/tmp/turbo-claude';
+// Electron: TURBO_PROJECT_DIR = client's local dir; Railway: TURBO_REPO_DIR = cloned repo
+const REPO_DIR = process.env.TURBO_PROJECT_DIR ?? process.env.TURBO_REPO_DIR ?? '/tmp/turbo-claude';
 
 export const readRepoFile = {
   name: 'read_repo_file',
