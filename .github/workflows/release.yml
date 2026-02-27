@@ -6,67 +6,116 @@ on:
       - 'v*'
 
 permissions:
-  contents: write   # needed to create GitHub Releases and upload assets
+  contents: write
 
 jobs:
-  # ─── macOS (.dmg — Apple Silicon + Intel) ──────────────────────────────────
-  build-mac:
-    name: macOS
-    runs-on: macos-latest
+  # ─── macOS arm64 (.dmg — Apple Silicon) ────────────────────────────────────
+  build-mac-arm64:
+    name: macOS (arm64)
+    runs-on: macos-latest   # Apple Silicon runner
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
 
-      - name: Install root deps
-        run: npm install
+      # Cache the Electron binary — avoids 503/timeout on re-download
+      - name: Cache Electron binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/electron
+          key: electron-mac-arm64-${{ hashFiles('node_modules/electron/package.json') }}
+          restore-keys: electron-mac-arm64-
 
-      - name: Install frontend deps
-        run: cd frontend && npm install
+      - name: Cache electron-builder
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/electron-builder
+          key: electron-builder-mac-arm64-${{ hashFiles('electron-builder.yml') }}
+          restore-keys: electron-builder-mac-arm64-
 
-      - name: Install server deps
-        run: cd server && npm install
+      - run: npm install
+      - run: cd frontend && npm install
+      - run: cd server && npm install
+      - run: npm run build
 
-      - name: Build (frontend + server + electron)
-        run: npm run build
-
-      - name: Package macOS installer
+      - name: Package macOS arm64 DMG
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Code signing is optional — omit CSC_LINK/CSC_KEY_PASSWORD for unsigned builds
-          # Clients can right-click → Open to bypass Gatekeeper on first launch
-        run: npx electron-builder --mac --publish always
+          ELECTRON_CACHE: ~/Library/Caches/electron
+          ELECTRON_BUILDER_CACHE: ~/Library/Caches/electron-builder
+        run: npx electron-builder --mac --arm64 --publish always
+
+  # ─── macOS x64 (.dmg — Intel) ──────────────────────────────────────────────
+  build-mac-x64:
+    name: macOS (x64)
+    runs-on: macos-13       # Intel runner
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Cache Electron binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/electron
+          key: electron-mac-x64-${{ hashFiles('node_modules/electron/package.json') }}
+          restore-keys: electron-mac-x64-
+
+      - name: Cache electron-builder
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/electron-builder
+          key: electron-builder-mac-x64-${{ hashFiles('electron-builder.yml') }}
+          restore-keys: electron-builder-mac-x64-
+
+      - run: npm install
+      - run: cd frontend && npm install
+      - run: cd server && npm install
+      - run: npm run build
+
+      - name: Package macOS x64 DMG
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ELECTRON_CACHE: ~/Library/Caches/electron
+          ELECTRON_BUILDER_CACHE: ~/Library/Caches/electron-builder
+        run: npx electron-builder --mac --x64 --publish always
 
   # ─── Windows (.exe NSIS installer) ─────────────────────────────────────────
   build-win:
     name: Windows
     runs-on: windows-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
 
-      - name: Install root deps
-        run: npm install
+      - name: Cache Electron binaries
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\electron\Cache
+          key: electron-win-${{ hashFiles('node_modules/electron/package.json') }}
+          restore-keys: electron-win-
 
-      - name: Install frontend deps
-        run: cd frontend && npm install
+      - name: Cache electron-builder
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\electron-builder\Cache
+          key: electron-builder-win-${{ hashFiles('electron-builder.yml') }}
+          restore-keys: electron-builder-win-
 
-      - name: Install server deps
-        run: cd server && npm install
-
-      - name: Build (frontend + server + electron)
-        run: npm run build
+      - run: npm install
+      - run: cd frontend && npm install
+      - run: cd server && npm install
+      - run: npm run build
 
       - name: Package Windows installer
         env:
@@ -78,28 +127,33 @@ jobs:
     name: Linux
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
 
-      - name: Install root deps
-        run: npm install
+      - name: Cache Electron binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/electron
+          key: electron-linux-${{ hashFiles('node_modules/electron/package.json') }}
+          restore-keys: electron-linux-
 
-      - name: Install frontend deps
-        run: cd frontend && npm install
+      - name: Cache electron-builder
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/electron-builder
+          key: electron-builder-linux-${{ hashFiles('electron-builder.yml') }}
+          restore-keys: electron-builder-linux-
 
-      - name: Install server deps
-        run: cd server && npm install
+      - run: npm install
+      - run: cd frontend && npm install
+      - run: cd server && npm install
+      - run: npm run build
 
-      - name: Build (frontend + server + electron)
-        run: npm run build
-
-      - name: Package Linux installer
+      - name: Package Linux AppImage
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --linux --publish always
