@@ -484,7 +484,8 @@
       } else if (platform === 'win') {
         return `turboiam-agent-setup-${version}.exe`;
       } else {
-        return `turboiam-agent-${version}-${arch}.AppImage`;
+        // electron-builder uses x86_64 (not x64) for Linux AppImage arch suffix
+        return `turboiam-agent-${version}-x86_64.AppImage`;
       }
     }
     function downloadUrl(version, filename) {

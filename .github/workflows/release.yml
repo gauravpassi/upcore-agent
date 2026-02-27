@@ -8,85 +8,10 @@ on:
 permissions:
   contents: write
 
+# macOS + Linux are built locally and uploaded via 'npm run upload-release'
+# Only Windows requires CI (needs a Windows runner to build the NSIS installer)
+
 jobs:
-  # ─── macOS arm64 (.dmg — Apple Silicon) ────────────────────────────────────
-  build-mac-arm64:
-    name: macOS (arm64)
-    runs-on: macos-13   # Intel runner — macos-latest (ARM) has hdiutil detach issues
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      # Cache the Electron binary — avoids 503/timeout on re-download
-      - name: Cache Electron binaries
-        uses: actions/cache@v4
-        with:
-          path: ~/Library/Caches/electron
-          key: electron-mac-arm64-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: electron-mac-arm64-
-
-      - name: Cache electron-builder
-        uses: actions/cache@v4
-        with:
-          path: ~/Library/Caches/electron-builder
-          key: electron-builder-mac-arm64-${{ hashFiles('electron-builder.yml') }}
-          restore-keys: electron-builder-mac-arm64-
-
-      - run: npm install
-      - run: cd frontend && npm install
-      - run: cd server && npm install
-      - run: npm run build
-
-      - name: Package macOS arm64 DMG
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ELECTRON_CACHE: ~/Library/Caches/electron
-          ELECTRON_BUILDER_CACHE: ~/Library/Caches/electron-builder
-        run: npx electron-builder --mac --arm64 --publish always
-
-  # ─── macOS x64 (.dmg — Intel) ──────────────────────────────────────────────
-  build-mac-x64:
-    name: macOS (x64)
-    runs-on: macos-13       # Intel runner
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Cache Electron binaries
-        uses: actions/cache@v4
-        with:
-          path: ~/Library/Caches/electron
-          key: electron-mac-x64-${{ hashFiles('node_modules/electron/package.json') }}
-          restore-keys: electron-mac-x64-
-
-      - name: Cache electron-builder
-        uses: actions/cache@v4
-        with:
-          path: ~/Library/Caches/electron-builder
-          key: electron-builder-mac-x64-${{ hashFiles('electron-builder.yml') }}
-          restore-keys: electron-builder-mac-x64-
-
-      - run: npm install
-      - run: cd frontend && npm install
-      - run: cd server && npm install
-      - run: npm run build
-
-      - name: Package macOS x64 DMG
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ELECTRON_CACHE: ~/Library/Caches/electron
-          ELECTRON_BUILDER_CACHE: ~/Library/Caches/electron-builder
-        run: npx electron-builder --mac --x64 --publish always
-
-  # ─── Windows (.exe NSIS installer) ─────────────────────────────────────────
   build-win:
     name: Windows
     runs-on: windows-latest
@@ -102,7 +27,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~\AppData\Local\electron\Cache
-          key: electron-win-${{ hashFiles('node_modules/electron/package.json') }}
+          key: electron-win-${{ hashFiles('**/package-lock.json') }}
           restore-keys: electron-win-
 
       - name: Cache electron-builder
@@ -121,39 +46,3 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --win --publish always
-
-  # ─── Linux (.AppImage) ──────────────────────────────────────────────────────
-  build-linux:
-    name: Linux
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Cache Electron binaries
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/electron
-          key: electron-linux-${{ hashFiles('node_modules/electron/package.json') }}
-          restore-keys: electron-linux-
-
-      - name: Cache electron-builder
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/electron-builder
-          key: electron-builder-linux-${{ hashFiles('electron-builder.yml') }}
-          restore-keys: electron-builder-linux-
-
-      - run: npm install
-      - run: cd frontend && npm install
-      - run: cd server && npm install
-      - run: npm run build
-
-      - name: Package Linux AppImage
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --linux --publish always
