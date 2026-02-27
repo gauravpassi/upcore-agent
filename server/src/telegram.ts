@@ -260,6 +260,7 @@ async function handleMessage(bot: TelegramBot, msg: TelegramBot.Message): Promis
   try {
     state.conversationHistory = await runAgent(
       text,
+      undefined, // no images in Telegram context
       state.conversationHistory,
       (event: AgentEvent) => {
         switch (event.type) {
