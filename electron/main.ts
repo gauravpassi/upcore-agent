@@ -41,6 +41,8 @@ let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let serverProcess: ChildProcess | null = null;
 let serverPort: number = store.get('port') as number;
+// Guard: prevents concurrent / repeated createWindow() calls
+let isCreatingWindow = false;
 
 // ─── Server Management ───────────────────────────────────────────────────────
 
@@ -178,54 +180,64 @@ function autoLogin(port: number, password: string): Promise<string> {
 // ─── Window Management ────────────────────────────────────────────────────────
 
 async function createWindow(): Promise<void> {
-  mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 860,
-    minWidth: 900,
-    minHeight: 600,
-    title: 'TurboIAM Agent',
-    backgroundColor: '#0f0f11',
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    trafficLightPosition: { x: 16, y: 20 },
-  });
+  // Prevent multiple windows being created concurrently (e.g. rapid 'activate' events)
+  if (isCreatingWindow || mainWindow !== null) return;
+  isCreatingWindow = true;
 
-  // Load the UI
-  const needsSetup = !store.get('projectDir') || !store.get('anthropicApiKey');
+  try {
+    mainWindow = new BrowserWindow({
+      width: 1280,
+      height: 860,
+      minWidth: 900,
+      minHeight: 600,
+      title: 'TurboIAM Agent',
+      backgroundColor: '#0f0f11',
+      webPreferences: {
+        preload: path.join(__dirname, 'preload.js'),
+        contextIsolation: true,
+        nodeIntegration: false,
+      },
+      titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+      trafficLightPosition: { x: 16, y: 20 },
+    });
 
-  if (isDev) {
-    // Dev: Vite dev server
-    await mainWindow.loadURL(`http://localhost:5173${needsSetup ? '?setup=true' : ''}`);
-    mainWindow.webContents.openDevTools();
-  } else {
-    // Production: get auto-login token and load the bundled app
-    try {
-      const password = store.get('agentPassword') as string;
-      const token = await autoLogin(serverPort, password);
-      await mainWindow.loadURL(
-        `http://localhost:${serverPort}?autoToken=${token}${needsSetup ? '&setup=true' : ''}`,
-      );
-    } catch (err) {
-      console.error('[Electron] Auto-login failed:', err);
-      await mainWindow.loadURL(
-        `http://localhost:${serverPort}?setup=${needsSetup}`,
-      );
+    mainWindow.on('closed', () => {
+      mainWindow = null;
+    });
+
+    // Open external links in browser, not in Electron
+    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+      shell.openExternal(url);
+      return { action: 'deny' };
+    });
+
+    // Load the UI
+    const needsSetup = !store.get('projectDir') || !store.get('anthropicApiKey');
+
+    if (isDev) {
+      // Dev: Vite dev server
+      await mainWindow.loadURL(`http://localhost:5173${needsSetup ? '?setup=true' : ''}`);
+      mainWindow.webContents.openDevTools();
+    } else {
+      // Production: wait for server then auto-login
+      try {
+        await waitForServer(serverPort);
+        const password = store.get('agentPassword') as string;
+        const token = await autoLogin(serverPort, password);
+        await mainWindow.loadURL(
+          `http://localhost:${serverPort}?autoToken=${token}${needsSetup ? '&setup=true' : ''}`,
+        );
+      } catch (err) {
+        console.error('[Electron] Server ready / auto-login failed:', err);
+        // Load a simple inline error page — do NOT close the window
+        await mainWindow.loadURL(
+          `data:text/html,<html style="background:%230f0f11;color:%23f3f3f5;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><div style="text-align:center"><h2>Starting TurboIAM Agent…</h2><p style="color:%236B7280">The backend server is taking longer than expected.<br>Please quit and reopen the app.</p></div></html>`,
+        );
+      }
     }
+  } finally {
+    isCreatingWindow = false;
   }
-
-  mainWindow.on('closed', () => {
-    mainWindow = null;
-  });
-
-  // Open external links in browser, not in Electron
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
-    return { action: 'deny' };
-  });
 }
 
 // ─── System Tray ─────────────────────────────────────────────────────────────
@@ -365,15 +377,8 @@ app.whenReady().then(async () => {
   // Create tray icon
   createTray();
 
-  // Wait for server to be ready, then open window
-  try {
-    await waitForServer(serverPort);
-    await createWindow();
-  } catch (err) {
-    console.error('[Electron] Server startup failed:', err);
-    // Still open window — it will show connection error
-    await createWindow();
-  }
+  // Open the window immediately — createWindow() will wait for the server internally
+  await createWindow();
 });
 
 // Keep app running when all windows closed (macOS behavior)
@@ -383,9 +388,11 @@ app.on('window-all-closed', () => {
   }
 });
 
+// macOS: re-open window when dock icon is clicked
+// The isCreatingWindow + mainWindow !== null guard in createWindow() prevents duplicates
 app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
+  if (mainWindow === null && !isCreatingWindow) {
+    void createWindow();
   }
 });
 
