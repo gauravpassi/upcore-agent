@@ -441,7 +441,13 @@
     <div class="note-grid">
       <div class="note-item">
         <strong>🍎 macOS — First Launch</strong>
-        The app is not yet notarized. After downloading, right-click the <code>.dmg</code> → <strong>Open</strong> (not double-click) to bypass Gatekeeper on first launch. Drag to Applications as normal.
+        The app is ad-hoc signed but not Apple-notarized. After dragging to Applications, <strong>right-click → Open</strong> (don't double-click) to bypass Gatekeeper.
+        <br><br>
+        If you see <em>"damaged and can't be opened"</em>, open <strong>Terminal</strong> and run:
+        <br>
+        <code style="display:block;margin-top:6px;padding:6px 10px;background:rgba(0,0,0,0.4);border-radius:6px;font-size:12px;word-break:break-all;">sudo xattr -rd com.apple.quarantine "/Applications/TurboIAM Agent.app"</code>
+        <br>
+        Then open the app normally.
       </div>
       <div class="note-item">
         <strong>🪟 Windows — SmartScreen</strong>

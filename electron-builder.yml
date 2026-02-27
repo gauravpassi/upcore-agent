@@ -35,6 +35,9 @@ extraResources:
   - from: context
     to: context
 
+# Post-pack hook: ad-hoc signs the .app so Apple Silicon doesn't show "damaged"
+afterPack: scripts/afterPack.js
+
 # macOS
 mac:
   icon: assets/icon.icns
@@ -44,8 +47,8 @@ mac:
       arch:
         - x64
         - arm64
-  # Hardened runtime + entitlements required for notarization
-  # Leave unsigned for dev builds — clients can right-click → Open on first launch
+  # identity: null  → don't look for an Apple Developer certificate (ad-hoc via afterPack)
+  identity: null
   hardenedRuntime: false
   gatekeeperAssess: false
 
