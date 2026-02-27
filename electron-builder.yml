@@ -2,6 +2,16 @@ appId: com.turboiam.agent
 productName: TurboIAM Agent
 copyright: Copyright © 2025 TurboIAM
 
+# Clean filenames (no spaces, consistent format)
+artifactName: turboiam-agent-${version}-${arch}.${ext}
+
+# GitHub Releases — used by electron-builder --publish and auto-updater
+publish:
+  provider: github
+  owner: gauravpassi
+  repo: upcore-agent
+  releaseType: release
+
 # Output directory for built installers
 directories:
   output: dist-electron
@@ -34,13 +44,13 @@ mac:
       arch:
         - x64
         - arm64
-  hardenedRuntime: true
+  # Hardened runtime + entitlements required for notarization
+  # Leave unsigned for dev builds — clients can right-click → Open on first launch
+  hardenedRuntime: false
   gatekeeperAssess: false
-  entitlements: assets/entitlements.mac.plist
-  entitlementsInherit: assets/entitlements.mac.plist
 
 dmg:
-  title: TurboIAM Agent
+  title: TurboIAM Agent ${version}
   contents:
     - x: 130
       y: 220
@@ -62,6 +72,7 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
+  artifactName: turboiam-agent-setup-${version}.${ext}
 
 # Linux
 linux:
@@ -71,9 +82,3 @@ linux:
     - target: AppImage
       arch:
         - x64
-
-# Auto-updater (configure publish for auto-updates)
-# publish:
-#   provider: github
-#   owner: your-org
-#   repo: turboiam-agent-desktop

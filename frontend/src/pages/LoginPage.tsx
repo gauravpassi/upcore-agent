@@ -107,6 +107,21 @@ export function LoginPage({ onLogin, isLoading, error, onClearError }: LoginPage
         <p className="text-center text-xs text-[#9CA3AF] mt-6">
           For developer access, contact your team lead.
         </p>
+
+        {/* Desktop app download link */}
+        <div className="text-center mt-4">
+          <a
+            href="/download.html"
+            className="inline-flex items-center gap-1.5 text-xs text-[#6B7280] hover:text-[#4F46E5] transition-colors"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            Download Desktop App
+          </a>
+        </div>
       </div>
     </div>
   );

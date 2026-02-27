@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Download — TurboIAM Agent Desktop</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0b0b0e;
+      --surface:   #141417;
+      --card:      #1a1a1f;
+      --border:    #2a2a32;
+      --border-hi: #3d3d4a;
+      --accent:    #4F46E5;
+      --accent-h:  #4338CA;
+      --accent-lo: rgba(79,70,229,0.12);
+      --green:     #16A34A;
+      --green-bg:  rgba(22,163,74,0.1);
+      --text:      #f3f3f5;
+      --muted:     #8b8b99;
+      --faint:     #4b4b58;
+      --mac:       #636366;
+      --win:       #0078d4;
+      --linux:     #f07d00;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── HEADER ─────────────────────────────────────────── */
+    header {
+      border-bottom: 1px solid var(--border);
+      background: rgba(11,11,14,0.85);
+      backdrop-filter: blur(12px);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .header-inner {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 0 24px;
+      height: 60px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+    }
+    .logo-icon {
+      width: 32px; height: 32px;
+      background: var(--accent);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .logo-text { font-size: 15px; font-weight: 700; color: var(--text); }
+    .header-link {
+      font-size: 13px; color: var(--muted);
+      text-decoration: none;
+      transition: color .15s;
+    }
+    .header-link:hover { color: var(--text); }
+
+    /* ── HERO ────────────────────────────────────────────── */
+    .hero {
+      text-align: center;
+      padding: 72px 24px 56px;
+      max-width: 640px;
+      margin: 0 auto;
+    }
+    .version-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--accent-lo);
+      border: 1px solid rgba(79,70,229,0.3);
+      border-radius: 100px;
+      padding: 4px 12px;
+      font-size: 12px;
+      color: #a5b4fc;
+      margin-bottom: 24px;
+    }
+    .version-badge .dot {
+      width: 6px; height: 6px;
+      background: var(--accent);
+      border-radius: 50%;
+    }
+    h1 {
+      font-size: clamp(28px, 5vw, 42px);
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      line-height: 1.15;
+      margin-bottom: 16px;
+      background: linear-gradient(135deg, #f3f3f5 30%, #8b8b99);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .hero-sub {
+      font-size: 16px;
+      color: var(--muted);
+      line-height: 1.6;
+      margin-bottom: 40px;
+    }
+
+    /* ── DETECTED PLATFORM BANNER ───────────────────────── */
+    .detected-banner {
+      display: none;
+      align-items: center;
+      gap: 10px;
+      background: var(--green-bg);
+      border: 1px solid rgba(22,163,74,0.25);
+      border-radius: 12px;
+      padding: 12px 18px;
+      font-size: 13px;
+      color: #4ade80;
+      margin-bottom: 32px;
+      text-align: left;
+    }
+    .detected-banner.show { display: flex; }
+
+    /* ── DOWNLOAD CARDS ──────────────────────────────────── */
+    .cards-section {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 0 24px 64px;
+    }
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1.5px solid var(--border);
+      border-radius: 18px;
+      padding: 28px;
+      transition: border-color .2s, transform .15s;
+      position: relative;
+      overflow: hidden;
+    }
+    .card::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse at top, rgba(79,70,229,0.05) 0%, transparent 70%);
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity .2s;
+    }
+    .card:hover { border-color: var(--border-hi); transform: translateY(-2px); }
+    .card:hover::before { opacity: 1; }
+    .card.current {
+      border-color: rgba(79,70,229,0.5);
+      background: linear-gradient(145deg, #1a1a2e, #1a1a1f);
+    }
+    .card.current::before { opacity: 1; }
+    .current-tag {
+      display: none;
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      background: var(--accent);
+      color: #fff;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 6px;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+    .card.current .current-tag { display: block; }
+
+    .card-os-icon {
+      width: 44px; height: 44px;
+      border-radius: 12px;
+      display: flex; align-items: center; justify-content: center;
+      margin-bottom: 16px;
+      font-size: 22px;
+    }
+    .icon-mac  { background: rgba(99,99,102,0.15); }
+    .icon-win  { background: rgba(0,120,212,0.12); }
+    .icon-linux { background: rgba(240,125,0,0.12); }
+
+    .card h2 { font-size: 17px; font-weight: 700; margin-bottom: 4px; }
+    .card .arch { font-size: 12px; color: var(--faint); margin-bottom: 20px; }
+
+    .btn-group { display: flex; flex-direction: column; gap: 8px; }
+
+    .btn {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 11px 16px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 600;
+      text-decoration: none;
+      border: 1.5px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      transition: border-color .15s, background .15s, transform .1s;
+      position: relative;
+    }
+    .btn:hover {
+      border-color: var(--border-hi);
+      background: #202026;
+      transform: translateY(-1px);
+    }
+    .btn.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    .btn.primary:hover { background: var(--accent-h); border-color: var(--accent-h); }
+
+    .btn-left { display: flex; align-items: center; gap: 8px; }
+    .btn-left svg { opacity: .7; flex-shrink: 0; }
+    .btn-tag {
+      font-size: 10px;
+      font-weight: 700;
+      background: rgba(255,255,255,0.15);
+      border-radius: 4px;
+      padding: 2px 5px;
+      letter-spacing: .04em;
+    }
+    .btn-size {
+      font-size: 11px;
+      color: rgba(255,255,255,0.5);
+      font-weight: 400;
+    }
+    .btn:not(.primary) .btn-size { color: var(--faint); }
+
+    .loading-btn {
+      opacity: .5;
+      pointer-events: none;
+    }
+
+    /* ── INSTALL NOTES ───────────────────────────────────── */
+    .notes {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 0 24px 80px;
+    }
+    .notes h3 { font-size: 13px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 16px; }
+    .note-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 12px;
+    }
+    .note-item {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+    .note-item strong { color: var(--text); display: block; margin-bottom: 4px; }
+    code {
+      background: rgba(255,255,255,0.07);
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      color: #a5b4fc;
+    }
+
+    /* ── FOOTER ──────────────────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 24px;
+      text-align: center;
+      font-size: 12px;
+      color: var(--faint);
+      margin-top: auto;
+    }
+    footer a { color: var(--muted); text-decoration: none; }
+    footer a:hover { color: var(--text); }
+
+    /* ── ERROR STATE ─────────────────────────────────────── */
+    .error-note {
+      display: none;
+      background: rgba(239,68,68,0.1);
+      border: 1px solid rgba(239,68,68,0.25);
+      border-radius: 10px;
+      padding: 12px 16px;
+      font-size: 13px;
+      color: #f87171;
+      margin-bottom: 24px;
+    }
+    .error-note.show { display: block; }
+
+    @media (max-width: 600px) {
+      .hero { padding: 48px 24px 40px; }
+      .cards { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ── Header ─────────────────────────────────────────── -->
+  <header>
+    <div class="header-inner">
+      <a class="logo" href="/">
+        <div class="logo-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+            <path d="M2 17l10 5 10-5"/>
+            <path d="M2 12l10 5 10-5"/>
+          </svg>
+        </div>
+        <span class="logo-text">TurboIAM Agent</span>
+      </a>
+      <a class="header-link" href="https://github.com/gauravpassi/upcore-agent/releases" target="_blank" rel="noopener">
+        All releases ↗
+      </a>
+    </div>
+  </header>
+
+  <!-- ── Hero ───────────────────────────────────────────── -->
+  <div class="hero">
+    <div class="version-badge">
+      <span class="dot"></span>
+      <span id="version-label">Loading latest version…</span>
+    </div>
+    <h1>TurboIAM Agent<br>Desktop App</h1>
+    <p class="hero-sub">
+      Your AI coding assistant, installed locally.<br>
+      Reads and writes your TurboIAM codebase directly — no cloud sync required.
+    </p>
+
+    <div class="detected-banner" id="detected-banner">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+      <span id="detected-text">Recommended download highlighted below</span>
+    </div>
+
+    <div class="error-note" id="error-note">
+      Could not fetch latest release info. Download links below point to the most recent build.
+    </div>
+  </div>
+
+  <!-- ── Download Cards ─────────────────────────────────── -->
+  <section class="cards-section">
+    <div class="cards">
+
+      <!-- macOS -->
+      <div class="card" id="card-mac">
+        <div class="current-tag">Your Platform</div>
+        <div class="card-os-icon icon-mac">🍎</div>
+        <h2>macOS</h2>
+        <p class="arch">Apple Silicon (M1/M2/M3) · Intel x64 · 10.15+</p>
+        <div class="btn-group">
+          <a class="btn primary loading-btn" id="btn-mac-arm64" href="#" download>
+            <span class="btn-left">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Download .dmg
+            </span>
+            <span class="btn-left">
+              <span class="btn-tag">ARM64</span>
+              <span class="btn-size" id="size-mac-arm64">—</span>
+            </span>
+          </a>
+          <a class="btn loading-btn" id="btn-mac-x64" href="#" download>
+            <span class="btn-left">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Download .dmg
+            </span>
+            <span class="btn-left">
+              <span class="btn-tag" style="background:rgba(255,255,255,0.08);color:var(--muted)">x64</span>
+              <span class="btn-size" id="size-mac-x64">—</span>
+            </span>
+          </a>
+        </div>
+      </div>
+
+      <!-- Windows -->
+      <div class="card" id="card-win">
+        <div class="current-tag">Your Platform</div>
+        <div class="card-os-icon icon-win">🪟</div>
+        <h2>Windows</h2>
+        <p class="arch">x64 · Windows 10 / 11</p>
+        <div class="btn-group">
+          <a class="btn primary loading-btn" id="btn-win-x64" href="#" download>
+            <span class="btn-left">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Download Installer
+            </span>
+            <span class="btn-left">
+              <span class="btn-tag">.exe</span>
+              <span class="btn-size" id="size-win-x64">—</span>
+            </span>
+          </a>
+        </div>
+      </div>
+
+      <!-- Linux -->
+      <div class="card" id="card-linux">
+        <div class="current-tag">Your Platform</div>
+        <div class="card-os-icon icon-linux">🐧</div>
+        <h2>Linux</h2>
+        <p class="arch">x64 · Ubuntu / Debian / Fedora</p>
+        <div class="btn-group">
+          <a class="btn primary loading-btn" id="btn-linux-x64" href="#" download>
+            <span class="btn-left">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Download .AppImage
+            </span>
+            <span class="btn-left">
+              <span class="btn-tag">.AppImage</span>
+              <span class="btn-size" id="size-linux-x64">—</span>
+            </span>
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Installation Notes ─────────────────────────────── -->
+  <section class="notes">
+    <h3>Installation Guide</h3>
+    <div class="note-grid">
+      <div class="note-item">
+        <strong>🍎 macOS — First Launch</strong>
+        The app is not yet notarized. After downloading, right-click the <code>.dmg</code> → <strong>Open</strong> (not double-click) to bypass Gatekeeper on first launch. Drag to Applications as normal.
+      </div>
+      <div class="note-item">
+        <strong>🪟 Windows — SmartScreen</strong>
+        If Windows Defender SmartScreen appears, click <strong>More info</strong> → <strong>Run anyway</strong>. The NSIS installer will guide you through the setup.
+      </div>
+      <div class="note-item">
+        <strong>🐧 Linux — AppImage</strong>
+        Make the file executable first:<br>
+        <code>chmod +x turboiam-agent-*.AppImage</code><br>
+        then run it directly — no installation needed.
+      </div>
+      <div class="note-item">
+        <strong>⚡ First Run Setup</strong>
+        On first launch the setup wizard will ask for your <strong>Anthropic API key</strong> and the path to your TurboIAM project folder. Both are stored locally on your machine, never transmitted.
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Footer ─────────────────────────────────────────── -->
+  <footer>
+    <p>
+      TurboIAM Agent Desktop &nbsp;·&nbsp;
+      <a href="https://github.com/gauravpassi/upcore-agent" target="_blank" rel="noopener">GitHub</a>
+      &nbsp;·&nbsp;
+      <a href="https://github.com/gauravpassi/upcore-agent/releases" target="_blank" rel="noopener">All Releases</a>
+      &nbsp;·&nbsp;
+      <a href="/">Open Web App</a>
+    </p>
+  </footer>
+
+  <script>
+    // ── Constants ──────────────────────────────────────────────────────────────
+    const REPO = 'gauravpassi/upcore-agent';
+    const API  = `https://api.github.com/repos/${REPO}/releases/latest`;
+
+    // Artifact names must match electron-builder.yml artifactName template
+    function assetName(platform, arch, version) {
+      if (platform === 'mac') {
+        return `turboiam-agent-${version}-${arch}.dmg`;
+      } else if (platform === 'win') {
+        return `turboiam-agent-setup-${version}.exe`;
+      } else {
+        return `turboiam-agent-${version}-${arch}.AppImage`;
+      }
+    }
+    function downloadUrl(version, filename) {
+      return `https://github.com/${REPO}/releases/download/v${version}/${filename}`;
+    }
+    function formatSize(bytes) {
+      if (!bytes) return '';
+      return (bytes / 1024 / 1024).toFixed(0) + ' MB';
+    }
+
+    // ── OS Detection ───────────────────────────────────────────────────────────
+    function detectOS() {
+      const ua = navigator.userAgent;
+      const platform = navigator.platform || '';
+      if (/Mac/i.test(platform) || /Macintosh|Mac OS X/i.test(ua)) return 'mac';
+      if (/Win/i.test(platform) || /Windows/i.test(ua)) return 'win';
+      if (/Linux/i.test(platform) || /Linux/i.test(ua)) return 'linux';
+      return null;
+    }
+    function detectArch() {
+      // Best-effort: M1+ Macs report arm64 via userAgentData on Chrome/Edge
+      const ua = navigator.userAgent.toLowerCase();
+      if (ua.includes('arm64') || ua.includes('aarch64')) return 'arm64';
+      // Safari on Apple Silicon still reports Intel in UA — default to arm64 for Mac
+      return 'arm64';
+    }
+
+    // ── Populate buttons ───────────────────────────────────────────────────────
+    function populateRelease(release) {
+      const version = release.tag_name.replace(/^v/, '');
+      const assets  = release.assets || [];
+
+      document.getElementById('version-label').textContent = `Latest: v${version}`;
+
+      function applyAsset(btnId, sizeId, platform, arch) {
+        const filename = assetName(platform, arch, version);
+        const asset    = assets.find(a => a.name === filename);
+        const btn      = document.getElementById(btnId);
+        const sizeEl   = document.getElementById(sizeId);
+
+        if (btn) {
+          btn.href = asset ? asset.browser_download_url : downloadUrl(version, filename);
+          btn.classList.remove('loading-btn');
+          delete btn.removeAttribute('download'); // let browser handle
+          if (sizeEl && asset) sizeEl.textContent = formatSize(asset.size);
+        }
+      }
+
+      applyAsset('btn-mac-arm64', 'size-mac-arm64', 'mac',   'arm64');
+      applyAsset('btn-mac-x64',   'size-mac-x64',   'mac',   'x64');
+      applyAsset('btn-win-x64',   'size-win-x64',   'win',   'x64');
+      applyAsset('btn-linux-x64', 'size-linux-x64', 'linux', 'x64');
+    }
+
+    function applyFallbackVersion(version) {
+      document.getElementById('version-label').textContent = `v${version}`;
+      ['btn-mac-arm64','btn-mac-x64','btn-win-x64','btn-linux-x64'].forEach(id => {
+        const btn = document.getElementById(id);
+        if (btn) {
+          const [, platform, arch] = id.match(/btn-(\w+)-(\w+)/);
+          const filename = assetName(platform === 'mac' ? 'mac' : platform === 'win' ? 'win' : 'linux', arch, version);
+          btn.href = downloadUrl(version, filename);
+          btn.classList.remove('loading-btn');
+        }
+      });
+    }
+
+    // ── Highlight current OS card ──────────────────────────────────────────────
+    function highlightOS() {
+      const os   = detectOS();
+      const arch = detectArch();
+      const cardMap = { mac: 'card-mac', win: 'card-win', linux: 'card-linux' };
+      const nameMap = {
+        mac:   `macOS (${arch === 'arm64' ? 'Apple Silicon' : 'Intel'})`,
+        win:   'Windows',
+        linux: 'Linux',
+      };
+
+      if (os && cardMap[os]) {
+        document.getElementById(cardMap[os])?.classList.add('current');
+        const banner = document.getElementById('detected-banner');
+        const text   = document.getElementById('detected-text');
+        if (banner && text) {
+          text.textContent = `Detected: ${nameMap[os]} — recommended download highlighted`;
+          banner.classList.add('show');
+        }
+      }
+    }
+
+    // ── Init ───────────────────────────────────────────────────────────────────
+    highlightOS();
+
+    fetch(API)
+      .then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then(populateRelease)
+      .catch(() => {
+        // Fallback to hardcoded version if GitHub API unavailable (rate limit, offline)
+        document.getElementById('error-note')?.classList.add('show');
+        applyFallbackVersion('1.0.0');
+      });
+  </script>
+</body>
+</html>

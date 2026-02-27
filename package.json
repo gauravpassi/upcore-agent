@@ -14,7 +14,11 @@
     "dist:mac": "npm run build && npx electron-builder --mac",
     "dist:win": "npm run build && npx electron-builder --win",
     "dist:linux": "npm run build && npx electron-builder --linux",
-    "start": "tsx server/src/index.ts"
+    "start": "tsx server/src/index.ts",
+    "release": "node -e \"const v=require('./package.json').version; const {execSync}=require('child_process'); execSync('git tag v'+v); execSync('git push origin v'+v); console.log('Tagged and pushed v'+v+' — GitHub Actions will now build the installers');\"",
+    "version:patch": "npm version patch --no-git-tag-version",
+    "version:minor": "npm version minor --no-git-tag-version",
+    "version:major": "npm version major --no-git-tag-version"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
