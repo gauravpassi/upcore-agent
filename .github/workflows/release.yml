@@ -12,7 +12,7 @@ jobs:
   # ─── macOS arm64 (.dmg — Apple Silicon) ────────────────────────────────────
   build-mac-arm64:
     name: macOS (arm64)
-    runs-on: macos-latest   # Apple Silicon runner
+    runs-on: macos-13   # Intel runner — macos-latest (ARM) has hdiutil detach issues
     steps:
       - uses: actions/checkout@v4
 
@@ -26,7 +26,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/Library/Caches/electron
-          key: electron-mac-arm64-${{ hashFiles('node_modules/electron/package.json') }}
+          key: electron-mac-arm64-${{ hashFiles('**/package-lock.json') }}
           restore-keys: electron-mac-arm64-
 
       - name: Cache electron-builder
