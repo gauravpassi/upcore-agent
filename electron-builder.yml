@@ -51,13 +51,13 @@ mac:
 
 dmg:
   title: TurboIAM-Agent-${version}
+  # No Applications symlink — it causes hdiutil detach to fail on GitHub Actions
+  # runners due to the symlink keeping the volume busy during unmount.
+  # Users drag the .app to Applications manually (standard macOS behavior).
   contents:
-    - x: 130
+    - x: 192
       y: 220
-    - x: 410
-      y: 220
-      type: link
-      path: /Applications
+      type: file
 
 # Windows
 win:
