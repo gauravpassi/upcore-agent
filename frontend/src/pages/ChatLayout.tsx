@@ -8,7 +8,7 @@ interface ChatLayoutProps {
 }
 
 export function ChatLayout({ token, onLogout }: ChatLayoutProps) {
-  const { messages, isStreaming, isConnected, send, cancel } = useAgent(token, onLogout);
+  const { messages, isStreaming, isConnected, heartbeatStatus, send, cancel } = useAgent(token, onLogout);
 
   return (
     <div className="flex h-screen bg-[#F3F4F6]">
@@ -92,7 +92,7 @@ export function ChatLayout({ token, onLogout }: ChatLayoutProps) {
         </header>
 
         {/* Chat area */}
-        <ChatWindow messages={messages} isStreaming={isStreaming} />
+        <ChatWindow messages={messages} isStreaming={isStreaming} heartbeatStatus={heartbeatStatus} />
 
         {/* Input */}
         <InputBar

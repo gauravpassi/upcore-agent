@@ -217,6 +217,7 @@ wss.on('connection', (ws: WebSocket) => {
     }
 
     let parsed: { type: string; content?: string; images?: WsIncomingImage[] };
+    // parsed.type values: 'message' | 'cancel' | 'continue'
     try {
       parsed = JSON.parse(raw.toString());
     } catch {
@@ -227,6 +228,37 @@ wss.on('connection', (ws: WebSocket) => {
     if (parsed.type === 'cancel') {
       state.abortController?.abort();
       state.abortController = null;
+      return;
+    }
+
+    // ── Auto-continue: start a fresh phase from the saved checkpoint ──────────
+    // Sent automatically by the frontend when a 'needs_continue' event is received.
+    // Resets conversation history so the new phase starts with a clean context.
+    if (parsed.type === 'continue') {
+      state.abortController?.abort();
+      state.abortController = new AbortController();
+
+      // Fresh context — state lives in the checkpoint file, not in memory
+      state.conversationHistory = [];
+
+      try {
+        state.conversationHistory = await runAgent(
+          'Continue from checkpoint. Start by calling load_checkpoint to see the current task state, then immediately execute the next step listed in the checkpoint.',
+          undefined,
+          [],
+          (event: AgentEvent) => {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify(event));
+            }
+          },
+          state.abortController.signal,
+        );
+      } catch (err) {
+        const message = (err as Error).message ?? 'An unexpected error occurred during continuation';
+        ws.send(JSON.stringify({ type: 'error', message }));
+      } finally {
+        state.abortController = null;
+      }
       return;
     }
 

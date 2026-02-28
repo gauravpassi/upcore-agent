@@ -9,18 +9,22 @@ import { readRepoFile } from './tools/readRepoFile.js';
 import { writeFile } from './tools/writeFile.js';
 import { runCommand } from './tools/runCommand.js';
 import { gitPush } from './tools/gitPush.js';
+import { saveCheckpoint, loadCheckpoint, clearCheckpoint } from './tools/checkpoint.js';
 
 const CONTEXT_DIR = path.resolve(__dirname, '../../context');
 
+// ─── Event Types ─────────────────────────────────────────────────────────────
 // Discriminated union of all events the agent can emit — consumed by WS and Telegram transports
 export type AgentEvent =
   | { type: 'text_chunk'; content: string }
   | { type: 'tool_start'; tool: string }
   | { type: 'tool_done'; tool: string; result: string }
+  | { type: 'heartbeat'; message: string; elapsed: number }
+  | { type: 'needs_continue'; summary: string }
   | { type: 'complete'; usage: { input: number; output: number } }
   | { type: 'error'; message: string };
 
-// Load TurboIAM brain as system prompt context
+// ─── System Prompt ────────────────────────────────────────────────────────────
 function loadSystemPrompt(): string {
   const claudeMdPath = path.join(CONTEXT_DIR, 'CLAUDE.md');
   let turboIamContext = '';
@@ -38,12 +42,32 @@ Stack: NestJS + TypeScript backend | React 18 + Vite + Tailwind CSS v4 frontend 
 ${turboIamContext}
 
 ═══════════════════════════════════════════════
+CHECKPOINT PROTOCOL — MANDATORY, EVERY SESSION
+═══════════════════════════════════════════════
+1. SESSION START: Call load_checkpoint FIRST — always, every session, no exceptions.
+   - Checkpoint found → resume from NEXT_STEP exactly. Skip completed steps.
+   - No checkpoint → fresh task. Proceed with the user's request normally.
+
+2. AFTER EACH MAJOR STEP: Call save_checkpoint to persist progress.
+   - After reading/planning (PLAN phase complete)
+   - After writing files (EXECUTE phase complete)
+   - After TypeScript verification (VERIFY phase complete)
+   - Before git_push
+
+3. PHASE BOUNDARY — save and hand off when EITHER condition is true:
+   - You have made 6+ tool calls in this phase, OR
+   - The response is getting long (you're approaching context limits)
+   Action: call save_checkpoint with exact nextStep, then STOP with "---PHASE COMPLETE---"
+   The system will automatically start a new phase and continue from the checkpoint.
+
+4. TASK COMPLETE: Call clear_checkpoint as the very LAST action after git_push succeeds.
+
+═══════════════════════════════════════════════
 CORE BEHAVIOR — READ THIS FIRST
 ═══════════════════════════════════════════════
 - Work in continuous cycles: PLAN → EXECUTE → VERIFY → CHECKPOINT → NEXT
 - NEVER attempt an entire task in one shot — always take the smallest safe step
 - Stream progress every cycle using [1/5] markers
-- If you cannot finish in one response, emit a CONTINUE HANDOFF block at the end
 - NEVER say "I'll wait for you to run this" — always provide the next action immediately
 
 ═══════════════════════════════════════════════
@@ -79,6 +103,7 @@ CYCLE FORMAT (use every cycle)
 - Files touched (list each)
 - What behavior changed
 - What remains to do
+- Call save_checkpoint with this info
 
 ### [5/5] NEXT — Continue Immediately
 - State exactly what you will do in the very next cycle
@@ -99,6 +124,7 @@ TURBOIAM CODE RULES (MANDATORY)
 TOOL USAGE STRATEGY
 ═══════════════════════════════════════════════
 Read (understand first):
+  0. load_checkpoint()           — ALWAYS FIRST: check for unfinished work
   1. get_context('ROOT')         — architecture, patterns, sprint status
   2. get_context('API_REFERENCE')— existing endpoints (check before adding new)
   3. get_context('DATA_MODEL')   — Prisma models and relationships
@@ -110,16 +136,9 @@ Write & Deploy:
   7. write_file(path, content)   — write complete file (no truncation)
   8. run_command("npx tsc --noEmit", "turbo-backend")   — verify backend TS
   9. run_command("npx tsc --noEmit", "turbo-frontend")  — verify frontend TS
-  10. git_push(message)          — commit + push → Railway + Vercel auto-deploy
-
-═══════════════════════════════════════════════
-STANDARD WORKFLOW (every bug fix or feature)
-═══════════════════════════════════════════════
-Cycle 1: read_repo_file → understand current code
-Cycle 2: write_file → implement fix/feature
-Cycle 3: run_command(tsc) → verify TS compiles
-Cycle 4: git_push → deploy to Railway + Vercel
-Cycle 5: confirm → "✅ Deployed. Railway (backend) and Vercel (frontend) are now deploying."
+  10. save_checkpoint(...)       — save progress before push
+  11. git_push(message)          — commit + push → Railway + Vercel auto-deploy
+  12. clear_checkpoint()         — ALWAYS LAST: clear checkpoint after successful deploy
 
 ═══════════════════════════════════════════════
 ANTI-STUCK RECOVERY (auto-attempt, in order)
@@ -131,23 +150,6 @@ If blocked:
   After 3 attempts still blocked: ask ONE precise question to the human.
 
 ═══════════════════════════════════════════════
-CONTINUE HANDOFF (use when response is getting long)
-═══════════════════════════════════════════════
-If you cannot finish in this response, end with:
-
----CONTINUE HANDOFF---
-GOAL: (what we're building)
-ACCEPTANCE_CRITERIA: (what done looks like)
-CURRENT_STEP: (exactly where we are)
-LAST_ACTIONS: (what was just done)
-LAST_RESULTS: (tsc output, errors, etc.)
-FILES_CHANGED: (list)
-NEXT_STEP_EXACT: (first tool call in next message)
----END HANDOFF---
-
-Then STOP. The next message must start by reading the handoff and executing NEXT_STEP_EXACT immediately.
-
-═══════════════════════════════════════════════
 STREAMING STYLE
 ═══════════════════════════════════════════════
 - Write short lines
@@ -156,7 +158,7 @@ STREAMING STYLE
 - Never write walls of text before taking action — act first, explain briefly`;
 }
 
-// Tool definitions for the Anthropic API
+// ─── Tool Definitions ─────────────────────────────────────────────────────────
 const TOOLS: Anthropic.Messages.Tool[] = [
   {
     name: readFile.name,
@@ -274,6 +276,49 @@ const TOOLS: Anthropic.Messages.Tool[] = [
       required: ['message'],
     },
   },
+  // ── Checkpoint tools ───────────────────────────────────────────────────────
+  {
+    name: saveCheckpoint.name,
+    description: saveCheckpoint.description,
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        goal: { type: 'string', description: 'What the overall task is trying to achieve' },
+        acceptanceCriteria: { type: 'string', description: 'What "done" looks like (testable)' },
+        filesTouched: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'List of files modified so far',
+        },
+        completedSteps: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Steps already completed in previous phases',
+        },
+        nextStep: { type: 'string', description: 'Exactly what the next phase should do first' },
+        lastResult: { type: 'string', description: 'Output of the last command or verification' },
+      },
+      required: ['goal', 'acceptanceCriteria', 'filesTouched', 'completedSteps', 'nextStep'],
+    },
+  },
+  {
+    name: loadCheckpoint.name,
+    description: loadCheckpoint.description,
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: clearCheckpoint.name,
+    description: clearCheckpoint.description,
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+      required: [],
+    },
+  },
 ];
 
 type ToolName =
@@ -284,7 +329,10 @@ type ToolName =
   | 'read_repo_file'
   | 'write_file'
   | 'run_command'
-  | 'git_push';
+  | 'git_push'
+  | 'save_checkpoint'
+  | 'load_checkpoint'
+  | 'clear_checkpoint';
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<{ content: { type: 'text'; text: string }[] }>;
 
@@ -297,6 +345,9 @@ const TOOL_HANDLERS: Record<ToolName, ToolHandler> = {
   write_file: writeFile.handler as ToolHandler,
   run_command: runCommand.handler as ToolHandler,
   git_push: gitPush.handler as ToolHandler,
+  save_checkpoint: saveCheckpoint.handler as ToolHandler,
+  load_checkpoint: loadCheckpoint.handler as ToolHandler,
+  clear_checkpoint: clearCheckpoint.handler as ToolHandler,
 };
 
 interface IncomingImage {
@@ -305,6 +356,19 @@ interface IncomingImage {
   name: string;
 }
 
+// ─── Token budget thresholds ──────────────────────────────────────────────────
+// Warn and trigger auto-continue before hitting Claude's context window ceiling
+const TOKEN_WARN_THRESHOLD = 90_000;   // emit warning text at this point
+const TOKEN_CUTOFF_THRESHOLD = 110_000; // force needs_continue at this point
+
+// Max turns per phase — keeps each API conversation small and prevents overflow
+// When hit, emits needs_continue so the frontend can start a fresh phase
+const MAX_TURNS_PER_PHASE = 12;
+
+// Heartbeat interval: emit a "still alive" event every N ms during tool execution
+const HEARTBEAT_INTERVAL_MS = 10_000;
+
+// ─── Main Agent Runner ────────────────────────────────────────────────────────
 export async function runAgent(
   userMessage: string,
   images: IncomingImage[] | undefined,
@@ -337,10 +401,10 @@ export async function runAgent(
     { role: 'user', content: userContent },
   ];
 
-  const MAX_TURNS = 30;
   let turns = 0;
+  let cumulativeInputTokens = 0;
 
-  while (turns < MAX_TURNS) {
+  while (turns < MAX_TURNS_PER_PHASE) {
     if (abortSignal.aborted) break;
     turns++;
 
@@ -372,7 +436,6 @@ export async function runAgent(
           currentTextContent += chunk;
           onEvent({ type: 'text_chunk', content: chunk });
         } else if (event.delta.type === 'input_json_delta') {
-          // Accumulate tool input JSON
           const lastTool = toolUseBlocks[toolUseBlocks.length - 1];
           if (lastTool) {
             (lastTool as { _rawInput?: string })._rawInput =
@@ -380,7 +443,6 @@ export async function runAgent(
           }
         }
       } else if (event.type === 'content_block_stop') {
-        // Parse accumulated tool input
         const lastTool = toolUseBlocks[toolUseBlocks.length - 1];
         if (lastTool && (lastTool as { _rawInput?: string })._rawInput) {
           try {
@@ -391,16 +453,33 @@ export async function runAgent(
         }
       } else if (event.type === 'message_stop') {
         const finalMsg = await stream.finalMessage();
-
-        // Build content blocks for history
         assistantContent = finalMsg.content;
+
+        // Track cumulative token usage
+        cumulativeInputTokens += finalMsg.usage.input_tokens;
+
+        // ── Token budget warning ──────────────────────────────────────────────
+        if (cumulativeInputTokens > TOKEN_WARN_THRESHOLD && cumulativeInputTokens <= TOKEN_CUTOFF_THRESHOLD) {
+          onEvent({
+            type: 'text_chunk',
+            content: `\n\n⚠️ *Context is getting large (${Math.round(cumulativeInputTokens / 1000)}k tokens) — saving checkpoint and continuing in a fresh phase soon...*\n`,
+          });
+        }
+
+        // ── Token budget exceeded — force continue ────────────────────────────
+        if (cumulativeInputTokens > TOKEN_CUTOFF_THRESHOLD) {
+          onEvent({
+            type: 'needs_continue',
+            summary: `Context reached ${Math.round(cumulativeInputTokens / 1000)}k tokens. Checkpoint should be saved. Continuing in a fresh phase with clean context.`,
+          });
+          return [...messages, { role: 'assistant', content: assistantContent }];
+        }
 
         if (finalMsg.stop_reason === 'end_turn') {
           onEvent({
             type: 'complete',
             usage: { input: finalMsg.usage.input_tokens, output: finalMsg.usage.output_tokens },
           });
-
           return [
             ...messages,
             { role: 'assistant', content: assistantContent },
@@ -408,7 +487,6 @@ export async function runAgent(
         }
 
         if (finalMsg.stop_reason === 'tool_use') {
-          // Execute tools and continue
           messages.push({ role: 'assistant', content: assistantContent });
 
           const toolResults: Anthropic.Messages.ToolResultBlockParam[] = [];
@@ -421,11 +499,29 @@ export async function runAgent(
             let resultText = '';
 
             if (handler) {
+              // ── Heartbeat during long-running tool calls ────────────────────
+              const toolStartTime = Date.now();
+              let heartbeatInterval: ReturnType<typeof setInterval> | null = setInterval(() => {
+                if (!abortSignal.aborted) {
+                  const elapsed = Math.round((Date.now() - toolStartTime) / 1000);
+                  onEvent({
+                    type: 'heartbeat',
+                    message: `${block.name} running...`,
+                    elapsed,
+                  });
+                }
+              }, HEARTBEAT_INTERVAL_MS);
+
               try {
                 const result = await handler(block.input as Record<string, unknown>);
                 resultText = result.content[0]?.text ?? '';
               } catch (err) {
                 resultText = `Error executing tool: ${(err as Error).message}`;
+              } finally {
+                if (heartbeatInterval !== null) {
+                  clearInterval(heartbeatInterval);
+                  heartbeatInterval = null;
+                }
               }
             } else {
               resultText = `Unknown tool: ${block.name}`;
@@ -461,7 +557,11 @@ export async function runAgent(
     void currentTextContent; // suppress unused warning
   }
 
-  // Max turns reached
-  onEvent({ type: 'error', message: 'Max turns reached. Please start a new conversation.' });
+  // ── Max turns per phase reached ─────────────────────────────────────────────
+  // Emit needs_continue instead of error — frontend will auto-start a fresh phase
+  onEvent({
+    type: 'needs_continue',
+    summary: `Phase limit (${MAX_TURNS_PER_PHASE} turns) reached. If a checkpoint was saved, the next phase will resume from it automatically.`,
+  });
   return messages;
 }

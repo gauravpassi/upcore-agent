@@ -2,18 +2,24 @@ import { useEffect, useRef } from 'react';
 import { Message } from './Message';
 import type { Message as MessageType } from '../types';
 
+interface HeartbeatStatus {
+  tool: string;
+  elapsed: number;
+}
+
 interface ChatWindowProps {
   messages: MessageType[];
   isStreaming: boolean;
+  heartbeatStatus: HeartbeatStatus | null;
 }
 
-export function ChatWindow({ messages, isStreaming }: ChatWindowProps) {
+export function ChatWindow({ messages, isStreaming, heartbeatStatus }: ChatWindowProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom on new content
+  // Auto-scroll to bottom on new content or heartbeat update
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [messages, heartbeatStatus]);
 
   const showTypingIndicator =
     isStreaming && messages.length > 0 && messages[messages.length - 1].role === 'user';
@@ -59,6 +65,21 @@ export function ChatWindow({ messages, isStreaming }: ChatWindowProps) {
                 <span className="typing-dot w-2 h-2 bg-[#9CA3AF] rounded-full" />
                 <span className="typing-dot w-2 h-2 bg-[#9CA3AF] rounded-full" />
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Heartbeat indicator — shown when a tool call is taking a long time (>10s) */}
+        {isStreaming && heartbeatStatus && (
+          <div className="flex justify-start mb-3">
+            <div className="flex items-center gap-2 bg-[#EEF2FF] border border-[#C7D2FE] rounded-xl px-3 py-2 text-xs text-[#4F46E5]">
+              {/* Pulsing dot */}
+              <span className="relative flex h-2 w-2 flex-shrink-0">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#4F46E5] opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-[#4F46E5]" />
+              </span>
+              <span className="font-medium">⚙️ {heartbeatStatus.tool}</span>
+              <span className="opacity-60">{heartbeatStatus.elapsed}s</span>
             </div>
           </div>
         )}

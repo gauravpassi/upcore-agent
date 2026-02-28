@@ -1,7 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { Message, ToolEvent, AttachedImage } from '../types';
 
-const WS_URL = import.meta.env.VITE_WS_URL ?? 'ws://localhost:3000/ws';
+// In Electron production the frontend is served by the Express server on the same port,
+// so derive the WS URL from window.location to always use the correct port.
+const WS_URL = import.meta.env.VITE_WS_URL ??
+  `ws://${window.location.host}/ws`;
 const MAX_RETRIES = 3;
 const RETRY_BASE_MS = 1000;
 
@@ -10,27 +13,35 @@ function generateId(): string {
 }
 
 interface WsMessage {
-  type: 'text_chunk' | 'tool_start' | 'tool_done' | 'complete' | 'error';
+  type: 'text_chunk' | 'tool_start' | 'tool_done' | 'complete' | 'error' | 'heartbeat' | 'needs_continue';
   content?: string;
   tool?: string;
   result?: string;
   message?: string;
   usage?: { input: number; output: number };
+  // heartbeat fields
+  elapsed?: number;
+  // needs_continue fields
+  summary?: string;
 }
 
-// If streaming but no event received for this long, auto-reset (prevents stuck UI)
-const STREAM_INACTIVITY_TIMEOUT_MS = 120_000; // 2 minutes
+// Reduced from 120s → 30s now that heartbeats arrive every 10s during tool execution
+const STREAM_INACTIVITY_TIMEOUT_MS = 30_000;
 
 export function useAgent(token: string | null, onAuthError: () => void) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
+  // Heartbeat status: shown in the UI while a tool is running a long operation
+  const [heartbeatStatus, setHeartbeatStatus] = useState<{ tool: string; elapsed: number } | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const retriesRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const shouldReconnectRef = useRef(true);
   const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Track whether we're in an auto-continue sequence (suppress user-visible "phase complete" noise)
+  const autoContinueRef = useRef(false);
 
   // ── Inactivity timer — resets streaming state if server goes silent ───────
   const clearInactivityTimer = useCallback(() => {
@@ -43,8 +54,9 @@ export function useAgent(token: string | null, onAuthError: () => void) {
   const resetInactivityTimer = useCallback(() => {
     clearInactivityTimer();
     inactivityTimerRef.current = setTimeout(() => {
-      // No streaming event for 2 minutes — connection likely dead
+      // No streaming event for 30s — connection likely dead
       setIsStreaming(false);
+      setHeartbeatStatus(null);
       setMessages((prev) => {
         const msgs = [...prev];
         const last = msgs[msgs.length - 1];
@@ -79,6 +91,7 @@ export function useAgent(token: string | null, onAuthError: () => void) {
     ws.onclose = (event) => {
       setIsConnected(false);
       setIsStreaming(false);
+      setHeartbeatStatus(null);
       clearInactivityTimer();
       wsRef.current = null;
 
@@ -113,6 +126,8 @@ export function useAgent(token: string | null, onAuthError: () => void) {
 
       switch (data.type) {
         case 'text_chunk': {
+          // Any text means the tool is done running — clear heartbeat
+          setHeartbeatStatus(null);
           const chunk = data.content ?? '';
           setMessages((prev) => {
             const msgs = [...prev];
@@ -136,6 +151,8 @@ export function useAgent(token: string | null, onAuthError: () => void) {
         }
 
         case 'tool_start': {
+          // Clear previous heartbeat for this new tool
+          setHeartbeatStatus(null);
           const newEvent: ToolEvent = {
             id: generateId(),
             tool: data.tool ?? '',
@@ -166,6 +183,7 @@ export function useAgent(token: string | null, onAuthError: () => void) {
         }
 
         case 'tool_done': {
+          setHeartbeatStatus(null);
           const toolName = data.tool ?? '';
           const result = data.result;
           setMessages((prev) => {
@@ -190,9 +208,56 @@ export function useAgent(token: string | null, onAuthError: () => void) {
           break;
         }
 
+        case 'heartbeat': {
+          // Update the heartbeat status indicator (shown in ChatWindow)
+          setHeartbeatStatus({
+            tool: data.tool ?? data.message ?? 'working...',
+            elapsed: data.elapsed ?? 0,
+          });
+          // Heartbeat resets the inactivity timer (already done above)
+          break;
+        }
+
+        case 'needs_continue': {
+          // Phase complete — start a fresh phase automatically
+          clearInactivityTimer();
+          setIsStreaming(false);
+          setHeartbeatStatus(null);
+
+          // Close out the current streaming message
+          setMessages((prev) => {
+            const msgs = [...prev];
+            const last = msgs[msgs.length - 1];
+            if (last?.role === 'agent' && last.isStreaming) {
+              msgs[msgs.length - 1] = { ...last, isStreaming: false };
+            }
+            // Add a subtle phase transition indicator
+            msgs.push({
+              id: generateId(),
+              role: 'agent',
+              content: `🔄 **Phase complete** — ${data.summary ?? 'Starting next phase...'}\n\n_Continuing automatically..._`,
+              timestamp: new Date(),
+            });
+            return msgs;
+          });
+
+          // Auto-continue after a brief pause so the UI can render
+          autoContinueRef.current = true;
+          setTimeout(() => {
+            if (wsRef.current?.readyState === WebSocket.OPEN) {
+              setIsStreaming(true);
+              resetInactivityTimer();
+              wsRef.current.send(JSON.stringify({ type: 'continue' }));
+            }
+            autoContinueRef.current = false;
+          }, 1200);
+          break;
+        }
+
         case 'complete': {
           clearInactivityTimer();
           setIsStreaming(false);
+          setHeartbeatStatus(null);
           setMessages((prev) => {
             const msgs = [...prev];
             const last = msgs[msgs.length - 1];
@@ -207,6 +272,7 @@ export function useAgent(token: string | null, onAuthError: () => void) {
         case 'error': {
           clearInactivityTimer();
           setIsStreaming(false);
+          setHeartbeatStatus(null);
           setMessages((prev) => {
             const msgs = [...prev];
             const last = msgs[msgs.length - 1];
@@ -227,7 +293,7 @@ export function useAgent(token: string | null, onAuthError: () => void) {
         }
       }
     };
-  }, [token, onAuthError]);
+  }, [token, onAuthError, resetInactivityTimer, clearInactivityTimer]);
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -240,7 +306,7 @@ export function useAgent(token: string | null, onAuthError: () => void) {
       clearInactivityTimer();
       wsRef.current?.close();
     };
-  }, [token, connect]);
+  }, [token, connect, clearInactivityTimer]);
 
   // ── Send ──────────────────────────────────────────────────────────────────
   const send = useCallback(
@@ -272,7 +338,7 @@ export function useAgent(token: string | null, onAuthError: () => void) {
       };
       wsRef.current.send(JSON.stringify(payload));
     },
-    [isStreaming],
+    [isStreaming, resetInactivityTimer],
   );
 
   // ── Cancel ────────────────────────────────────────────────────────────────
@@ -281,6 +347,7 @@ export function useAgent(token: string | null, onAuthError: () => void) {
     wsRef.current.send(JSON.stringify({ type: 'cancel' }));
     clearInactivityTimer();
     setIsStreaming(false);
+    setHeartbeatStatus(null);
     setMessages((prev) => {
       const msgs = [...prev];
       const last = msgs[msgs.length - 1];
@@ -289,7 +356,7 @@ export function useAgent(token: string | null, onAuthError: () => void) {
       }
       return msgs;
     });
-  }, []);
+  }, [clearInactivityTimer]);
 
-  return { messages, isStreaming, isConnected, send, cancel };
+  return { messages, isStreaming, isConnected, heartbeatStatus, send, cancel };
 }
