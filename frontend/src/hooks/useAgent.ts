@@ -126,8 +126,8 @@ export function useAgent(token: string | null, onAuthError: () => void) {
 
       switch (data.type) {
         case 'text_chunk': {
-          // Any text means the tool is done running — clear heartbeat
-          setHeartbeatStatus(null);
+          // Show "Generating..." status during text streaming
+          setHeartbeatStatus({ tool: 'Generating response...', elapsed: 0 });
           const chunk = data.content ?? '';
           setMessages((prev) => {
             const msgs = [...prev];
@@ -151,8 +151,8 @@ export function useAgent(token: string | null, onAuthError: () => void) {
         }
 
         case 'tool_start': {
-          // Clear previous heartbeat for this new tool
-          setHeartbeatStatus(null);
+          // Show the tool name immediately in the status bar (don't wait for 10s heartbeat)
+          setHeartbeatStatus({ tool: data.tool ?? 'running...', elapsed: 0 });
           const newEvent: ToolEvent = {
             id: generateId(),
             tool: data.tool ?? '',
@@ -183,7 +183,8 @@ export function useAgent(token: string | null, onAuthError: () => void) {
         }
 
         case 'tool_done': {
-          setHeartbeatStatus(null);
+          // Brief "Processing..." between tools — replaced immediately by next tool_start or text_chunk
+          setHeartbeatStatus({ tool: 'Processing...', elapsed: 0 });
           const toolName = data.tool ?? '';
           const result = data.result;
           setMessages((prev) => {
@@ -209,12 +210,11 @@ export function useAgent(token: string | null, onAuthError: () => void) {
         }
 
         case 'heartbeat': {
-          // Update the heartbeat status indicator (shown in ChatWindow)
-          setHeartbeatStatus({
-            tool: data.tool ?? data.message ?? 'working...',
+          // Update elapsed seconds on the existing tool status (tool name already set by tool_start)
+          setHeartbeatStatus((prev) => ({
+            tool: prev?.tool ?? data.message ?? 'working...',
             elapsed: data.elapsed ?? 0,
-          });
-          // Heartbeat resets the inactivity timer (already done above)
+          }));
           break;
         }
 
@@ -246,6 +246,7 @@ export function useAgent(token: string | null, onAuthError: () => void) {
           setTimeout(() => {
             if (wsRef.current?.readyState === WebSocket.OPEN) {
               setIsStreaming(true);
+              setHeartbeatStatus({ tool: 'Thinking...', elapsed: 0 });
               resetInactivityTimer();
               wsRef.current.send(JSON.stringify({ type: 'continue' }));
             }
@@ -326,6 +327,7 @@ export function useAgent(token: string | null, onAuthError: () => void) {
       ]);
 
       setIsStreaming(true);
+      setHeartbeatStatus({ tool: 'Thinking...', elapsed: 0 });
       resetInactivityTimer();
 
       // Send images as lightweight objects (strip previewUrl — not needed server-side)

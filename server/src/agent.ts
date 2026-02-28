@@ -357,16 +357,85 @@ interface IncomingImage {
 }
 
 // ─── Token budget thresholds ──────────────────────────────────────────────────
-// Warn and trigger auto-continue before hitting Claude's context window ceiling
-const TOKEN_WARN_THRESHOLD = 90_000;   // emit warning text at this point
-const TOKEN_CUTOFF_THRESHOLD = 110_000; // force needs_continue at this point
+const TOKEN_WARN_THRESHOLD  = 90_000;   // emit text warning at this point
+const TOKEN_CUTOFF_THRESHOLD = 110_000; // force checkpoint + needs_continue
 
-// Max turns per phase — keeps each API conversation small and prevents overflow
-// When hit, emits needs_continue so the frontend can start a fresh phase
+// Max turns per phase — keeps each API conversation small
 const MAX_TURNS_PER_PHASE = 12;
 
 // Heartbeat interval: emit a "still alive" event every N ms during tool execution
 const HEARTBEAT_INTERVAL_MS = 10_000;
+
+// ─── Forced checkpoint save ───────────────────────────────────────────────────
+/**
+ * Called before emitting needs_continue (either token cutoff or max turns).
+ * Makes a separate, minimal API call with tool_choice forced to save_checkpoint
+ * so the agent writes its current state to disk before the phase ends.
+ * This guarantees the next phase can always load_checkpoint and resume correctly.
+ */
+async function forceSaveCheckpoint(
+  client: Anthropic,
+  messages: Anthropic.Messages.MessageParam[],
+  onEvent: (event: AgentEvent) => void,
+  abortSignal: AbortSignal,
+): Promise<void> {
+  if (abortSignal.aborted) return;
+
+  onEvent({
+    type: 'text_chunk',
+    content: '\n\n📌 *Saving checkpoint before phase ends...*\n',
+  });
+
+  try {
+    // Force the model to call save_checkpoint with everything it knows from context
+    const response = await client.messages.create({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 1024,
+      system: loadSystemPrompt(),
+      tools: TOOLS,
+      tool_choice: { type: 'tool', name: 'save_checkpoint' },
+      messages: [
+        ...messages,
+        {
+          role: 'user',
+          content:
+            'PHASE END — MANDATORY ACTION: Call save_checkpoint right now with a full summary of:\n' +
+            '- goal: the overall task\n' +
+            '- acceptanceCriteria: what "done" means\n' +
+            '- filesTouched: all files modified so far ([] if none)\n' +
+            '- completedSteps: everything done so far as a list\n' +
+            '- nextStep: EXACTLY what to do first in the next phase (be specific)\n' +
+            '- lastResult: the last tool output or current status\n' +
+            'Base this on the full conversation above. This is required to resume correctly.',
+        },
+      ],
+    });
+
+    // Execute the save_checkpoint tool call the model returned
+    for (const block of response.content) {
+      if (block.type !== 'tool_use' || block.name !== 'save_checkpoint') continue;
+      onEvent({ type: 'tool_start', tool: 'save_checkpoint' });
+      try {
+        const result = await saveCheckpoint.handler(block.input as Parameters<typeof saveCheckpoint.handler>[0]);
+        const text = result.content[0]?.text ?? '';
+        onEvent({ type: 'tool_done', tool: 'save_checkpoint', result: text });
+        onEvent({ type: 'text_chunk', content: `\n${text}\n` });
+      } catch (err) {
+        onEvent({
+          type: 'text_chunk',
+          content: `\n⚠️ Checkpoint save failed: ${(err as Error).message}\n`,
+        });
+      }
+      break;
+    }
+  } catch (err) {
+    // Non-fatal — log and continue; the phase will still hand off
+    onEvent({
+      type: 'text_chunk',
+      content: `\n⚠️ Could not auto-save checkpoint: ${(err as Error).message}\n`,
+    });
+  }
+}
 
 // ─── Main Agent Runner ────────────────────────────────────────────────────────
 export async function runAgent(
@@ -466,13 +535,15 @@ export async function runAgent(
           });
         }
 
-        // ── Token budget exceeded — force continue ────────────────────────────
+        // ── Token budget exceeded — force checkpoint save then hand off ─────────
         if (cumulativeInputTokens > TOKEN_CUTOFF_THRESHOLD) {
+          const updatedMessages = [...messages, { role: 'assistant' as const, content: assistantContent }];
+          await forceSaveCheckpoint(client, updatedMessages, onEvent, abortSignal);
           onEvent({
             type: 'needs_continue',
-            summary: `Context reached ${Math.round(cumulativeInputTokens / 1000)}k tokens. Checkpoint should be saved. Continuing in a fresh phase with clean context.`,
+            summary: `Context reached ${Math.round(cumulativeInputTokens / 1000)}k tokens. Checkpoint saved. Continuing in a fresh phase with clean context.`,
           });
-          return [...messages, { role: 'assistant', content: assistantContent }];
+          return updatedMessages;
         }
 
         if (finalMsg.stop_reason === 'end_turn') {
@@ -558,10 +629,11 @@ export async function runAgent(
   }
 
   // ── Max turns per phase reached ─────────────────────────────────────────────
-  // Emit needs_continue instead of error — frontend will auto-start a fresh phase
+  // Force save checkpoint THEN hand off — next phase will resume from it
+  await forceSaveCheckpoint(client, messages, onEvent, abortSignal);
   onEvent({
     type: 'needs_continue',
-    summary: `Phase limit (${MAX_TURNS_PER_PHASE} turns) reached. If a checkpoint was saved, the next phase will resume from it automatically.`,
+    summary: `Phase limit (${MAX_TURNS_PER_PHASE} turns) reached. Checkpoint saved. Next phase will resume automatically.`,
   });
   return messages;
 }
