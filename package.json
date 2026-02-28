@@ -1,6 +1,6 @@
 {
   "name": "@turboiam/agent-desktop",
-  "version": "1.0.2",
+  "version": "1.0.7",
   "description": "TurboIAM Agent — AI coding assistant desktop app for TurboIAM enterprise clients",
   "main": "electron/dist/main.js",
   "scripts": {
@@ -8,7 +8,7 @@
     "dev:server": "cd server && npx tsx src/index.ts",
     "dev:frontend": "cd frontend && npx vite",
     "build:frontend": "cd frontend && npm install && npm run build",
-    "build:server": "cd server && npm install && npx tsc",
+    "build:server": "cd server && npm install && npm run build",
     "build:electron": "npx tsc -p electron/tsconfig.json",
     "build": "npm run build:frontend && npm run build:server && npm run build:electron",
     "dist:mac": "npm run build && npx electron-builder --mac",
