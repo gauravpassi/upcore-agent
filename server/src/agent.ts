@@ -366,6 +366,38 @@ const MAX_TURNS_PER_PHASE = 12;
 // Heartbeat interval: emit a "still alive" event every N ms during tool execution
 const HEARTBEAT_INTERVAL_MS = 10_000;
 
+// ─── Strip dangling tool_use blocks ──────────────────────────────────────────
+/**
+ * Remove trailing assistant messages that contain tool_use blocks without
+ * corresponding tool_result blocks in the next message.
+ *
+ * Anthropic API rule: every tool_use block in an assistant message MUST be
+ * immediately followed by a user message containing the matching tool_result.
+ * When a token-cutoff fires at message_stop, the assistantContent may contain
+ * tool_use blocks that were never executed — passing these to a new API call
+ * causes a 400 "tool_use ids were found without tool_result blocks" error.
+ */
+function stripDanglingToolUse(
+  messages: Anthropic.Messages.MessageParam[],
+): Anthropic.Messages.MessageParam[] {
+  const result = [...messages];
+  while (result.length > 0) {
+    const last = result[result.length - 1];
+    if (last.role === 'assistant') {
+      const content = Array.isArray(last.content) ? last.content : [];
+      const hasToolUse = content.some(
+        (b) => typeof b === 'object' && b !== null && 'type' in b && (b as { type: string }).type === 'tool_use',
+      );
+      if (hasToolUse) {
+        result.pop();
+        continue;
+      }
+    }
+    break;
+  }
+  return result;
+}
+
 // ─── Forced checkpoint save ───────────────────────────────────────────────────
 /**
  * Called before emitting needs_continue (either token cutoff or max turns).
@@ -395,7 +427,10 @@ async function forceSaveCheckpoint(
       tools: TOOLS,
       tool_choice: { type: 'tool', name: 'save_checkpoint' },
       messages: [
-        ...messages,
+        // Strip any trailing assistant messages with unresolved tool_use blocks.
+        // Without this, a token-cutoff mid-tool-call causes a 400 error because
+        // the API requires every tool_use to be followed by a tool_result.
+        ...stripDanglingToolUse(messages),
         {
           role: 'user',
           content:
@@ -490,14 +525,34 @@ export async function runAgent(
     let currentTextContent = '';
     const toolUseBlocks: Anthropic.Messages.ToolUseBlock[] = [];
 
+    // ── Streaming-phase heartbeat ─────────────────────────────────────────────
+    // Fires every 5s while the Claude API stream is open, regardless of whether
+    // the model is generating text, tool-input JSON, or has internally stalled.
+    // This resets the client inactivity timer and keeps the status bar updated.
+    // Without this, large write_file calls (500+ line files) generate
+    // input_json_delta events internally for minutes with nothing visible to the
+    // client — causing the 30s inactivity timeout to fire incorrectly.
+    let streamingPhase = 'Thinking...';
+    const streamStartTime = Date.now();
+    const streamHeartbeat = setInterval(() => {
+      if (!abortSignal.aborted) {
+        const elapsed = Math.round((Date.now() - streamStartTime) / 1000);
+        onEvent({ type: 'heartbeat', message: streamingPhase, elapsed });
+      }
+    }, 5_000);
+
+    try {
     // Process stream events
     for await (const event of stream) {
       if (abortSignal.aborted) break;
 
       if (event.type === 'content_block_start') {
         if (event.content_block.type === 'tool_use') {
+          streamingPhase = `${event.content_block.name} preparing...`;
           onEvent({ type: 'tool_start', tool: event.content_block.name });
           toolUseBlocks.push({ ...event.content_block, input: {} });
+        } else if (event.content_block.type === 'text') {
+          streamingPhase = 'Generating response...';
         }
       } else if (event.type === 'content_block_delta') {
         if (event.delta.type === 'text_delta') {
@@ -622,10 +677,15 @@ export async function runAgent(
           return [...messages, { role: 'assistant', content: assistantContent }];
         }
       }
-    }
 
     if (abortSignal.aborted) break;
     void currentTextContent; // suppress unused warning
+    }
+    } finally {
+      // Always clear the streaming heartbeat interval, even if the loop exits
+      // early via return, break, or exception — prevents interval leaks.
+      clearInterval(streamHeartbeat);
+    }
   }
 
   // ── Max turns per phase reached ─────────────────────────────────────────────

@@ -25,8 +25,10 @@ interface WsMessage {
   summary?: string;
 }
 
-// Reduced from 120s → 30s now that heartbeats arrive every 10s during tool execution
-const STREAM_INACTIVITY_TIMEOUT_MS = 30_000;
+// 60s — safe because the server now sends a streaming heartbeat every 5s
+// during the Claude API stream (even while generating large tool inputs),
+// so we'd only hit this if the connection is genuinely dead for a full minute.
+const STREAM_INACTIVITY_TIMEOUT_MS = 60_000;
 
 export function useAgent(token: string | null, onAuthError: () => void) {
   const [messages, setMessages] = useState<Message[]>([]);

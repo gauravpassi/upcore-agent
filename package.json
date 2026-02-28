@@ -1,6 +1,6 @@
 {
   "name": "@turboiam/agent-desktop",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "TurboIAM Agent — AI coding assistant desktop app for TurboIAM enterprise clients",
   "main": "electron/dist/main.js",
   "scripts": {
